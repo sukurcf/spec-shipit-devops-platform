@@ -1,6 +1,8 @@
 # ShipIt DevOps platform
 
-ShipIt is a six-week DevOps project where one fresher builds a local cloud-native delivery platform for the ShortLink URL shortener.
+ShipIt is a six-week backend/DevOps project where one fresher builds a small FastAPI ShortLink API and its local delivery platform. No student-built frontend, custom dashboard/panel/visualization, or public/cloud deployment exercise is allowed, including optional/bonus work.
+
+This is a specifications-only repository of exactly 15 Markdown documents. [Document 06](docs/06-tech-stack-and-setup.md#local-operation-contract) defines commands students MUST implement: `make local-start` defaults to stage 1 Compose (app + PostgreSQL), `make local-start STAGE=kind PROFILE=lite ENV=prod` selects stage 2 local kind, `make local-demo STAGE=compose` demonstrates the API, and `make local-stop STAGE=compose` preserves data. After initial downloads, both stages work without external egress, a cloud account, public hostname, or API key. kind uses locally built images and `kind load docker-image`; GitHub/GHCR are separate CI exercises, not startup dependencies.
 
 ## Quick facts
 
@@ -10,10 +12,11 @@ ShipIt is a six-week DevOps project where one fresher builds a local cloud-nativ
 | Difficulty | ★★★★☆ Upper-intermediate |
 | Duration | 6 weeks, about 180 hours |
 | Target job roles | DevOps Engineer, Cloud Engineer, Site Reliability Engineer, Platform Engineer, Build and Release Engineer |
-| Key skills | Linux, Bash, Docker, GitHub Actions, Kubernetes, Helm, Terraform, Prometheus, Grafana, alerting, runbooks |
+| Key skills | Python/FastAPI APIs, Linux, Bash, Docker, GitHub Actions, Kubernetes, Helm, Terraform, Prometheus HTTP API/CLI evidence, alerting, runbooks |
 | Prerequisites | Basic Python, basic SQL, Git basics, HTTP basics |
-| Minimum hardware | 8 GB RAM with the lite profile |
-| Recommended hardware | 16 GB RAM with the standard profile |
+| Minimum hardware | 8 GB RAM, 4 cores, 20 GB free disk; one-node kind lite, one active app environment |
+| Recommended hardware | 16 GB RAM, 4 or more cores, 30 GB free disk; standard profile |
+| WSL2 memory/swap | 8 GB host: 4 GB/4 GB; 16 GB host: 8 GB/4 GB |
 | Student repository name | `shipit` |
 
 ## What you will build
@@ -22,10 +25,10 @@ ShipIt is a six-week DevOps project where one fresher builds a local cloud-nativ
 - A secure Docker image below 200 MB and a Docker Compose development stack.
 - Operational Bash scripts for bootstrap, smoke tests, PostgreSQL backup, and restore.
 - GitHub Actions PR gates for lint, tests, coverage, scans, Helm, Kubernetes schemas, and Terraform.
-- A kind 0.33.x cluster with `shortlink-dev` and `shortlink-prod` namespaces.
+- A local kind 0.33.x cluster with dev/prod namespace definitions, exercised sequentially in lite.
 - A Helm 4.x chart named `shortlink` with dev and prod values.
 - Terraform 1.16.x that creates kind and installs Envoy Gateway and kube-prometheus-stack.
-- Grafana dashboards, Prometheus alerts, Mailpit alert e-mail, and alert runbooks.
+- Prometheus HTTP API/CLI queries, saved metrics/alert JSON, Mailpit alert e-mail, and runbooks. Built-in Grafana is optional operations tooling only, not an implementation deliverable.
 - Reliability evidence for rolling update, rollback, and pod self-healing drills.
 - Interview notes that map kind to EKS, GHCR to ECR, PVC to EBS, Gateway to a load balancer, alert e-mail to SNS or SES, and local Terraform state to S3 remote state.
 
@@ -36,18 +39,20 @@ flowchart TD
   Dev["Application developer"] --> PR["GitHub pull request"]
   PR --> CI["GitHub Actions gates"]
   CI --> GHCR["GHCR image tags"]
-  GHCR --> Helm["Helm shortlink chart"]
+  GHCR --> CIProof["Separate registry-delivery evidence"]
+  LocalBuild["Local image build and kind load"] --> Helm["Helm shortlink chart"]
+  LocalBuild --> Compose["Stage 1 Compose app and PostgreSQL"]
   Terraform["Terraform platform apply"] --> Kind["kind Kubernetes cluster"]
   Terraform --> Envoy["Envoy Gateway"]
   Terraform --> Mon["kube-prometheus-stack"]
-  Helm --> DevNs["shortlink-dev namespace"]
-  Helm --> ProdNs["shortlink-prod namespace"]
+  Helm --> DevNs["shortlink-dev definition"]
+  Helm --> ProdNs["shortlink-prod definition - one active environment"]
   Envoy --> App["ShortLink FastAPI pods"]
   App --> PG["PostgreSQL StatefulSet and PVC"]
-  Mon --> Grafana["Grafana RED dashboard"]
+  Mon --> Metrics["Prometheus API and CLI evidence"]
   Mon --> Alertmanager["Alertmanager"]
   Alertmanager --> Mailpit["Mailpit e-mail"]
-  SRE["On-call SRE"] --> Grafana
+  SRE["On-call SRE"] --> Metrics
   SRE --> Mailpit
 ```
 
@@ -113,3 +118,4 @@ Every Friday, show a 15-minute demo to the trainer. Show working evidence, not s
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-02 | First release |
+| 1.1 | 2026-10-02 | Backend/local DevOps only. Frontend/custom visualization and AWS deployment tasks/points are removed; effort moves to API contracts, metric/alert evidence, offline Compose/kind operations, and artifact validation. Original Python coverage and 45-test minimum remain. |

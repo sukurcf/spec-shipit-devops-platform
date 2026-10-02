@@ -4,7 +4,7 @@ Purpose: This document defines ShortLink data, platform evidence records, relati
 
 ## Data scope
 
-ShipIt uses PostgreSQL for ShortLink application data. Each Kubernetes environment has its own PostgreSQL StatefulSet, PVC, and Service. Dev and prod data MUST NOT share a database. Platform evidence such as backups, releases, and alerts can be stored as repository documents or database rows in the student implementation.
+ShipIt uses PostgreSQL for ShortLink data: a named Compose volume first, then independent kind dev/prod StatefulSet/PVC/Service/Secret definitions. Only one app/database environment runs at once locally; inactive workloads have 0 replicas and retained PVCs. Stages do not automatically share or transfer data. Platform backup/release/metric/alert evidence can be student repository documents/JSON or database rows; no dashboard export is a deliverable.
 
 ## Entities and tables
 
@@ -49,7 +49,7 @@ ShipIt uses PostgreSQL for ShortLink application data. Each Kubernetes environme
 |---|---|---|---|
 | `release_id` | string | Unique; matches Helm release revision or Git tag. | Release evidence identifier. |
 | `environment` | enum | `dev` or `prod`. | Deployment target. |
-| `image_tag` | string | Required; SemVer or short SHA. | Container image tag. |
+| `image_tag` | string | Required; local SHA-derived tag or separate CI SemVer/short SHA. | Local loaded tag is independent of GHCR availability. |
 | `state` | enum | Release state values. | Current release status. |
 | `deployed_at` | timestamp | Nullable until deployed. | Deployment time. |
 | `rollback_from` | string | Nullable. | Previous failed release when rollback occurs. |
@@ -72,6 +72,7 @@ ShipIt uses PostgreSQL for ShortLink application data. Each Kubernetes environme
 |---|---|---|---|
 | `file_name` | string | Unique; includes timestamp `YYYYMMDD-HHMMSS`. | Local backup file name. |
 | `environment` | enum | `dev` or `prod`. | Source database environment. |
+| `stage` | enum | `compose` or `kind`. | Prevents restore into the wrong independent local database. |
 | `created_at` | timestamp | Required. | Backup creation time. |
 | `source_database` | string | Required. | Database name. |
 | `retention_days` | int | Always 7 for Must scope. | Rotation period. |
@@ -87,6 +88,8 @@ ShipIt uses PostgreSQL for ShortLink application data. Each Kubernetes environme
 | `prometheus_retention` | string | `6h` or `24h`. | Local metric retention. |
 | `loki_enabled` | boolean | False in lite. | Whether log stack runs. |
 | `argocd_enabled` | boolean | False in lite. | Whether GitOps stack runs. |
+| `active_environment` | enum | `dev` or `prod`; only one active. | Inactive app/database replicas are 0; PVCs persist. |
+| `grafana_enabled` | boolean | False in lite/default; optional standard only. | Unmodified operations tooling, not custom visualization. |
 
 ## Relationships
 
@@ -162,9 +165,9 @@ These are requirements, not SQL DDL.
 |---|---|
 | Environment | `dev`, `prod` |
 | Kubernetes namespace | `shortlink-dev`, `shortlink-prod` |
-| Host base URL | `http://shortlink-dev.localhost:8080`, `http://shortlink.localhost:8080` |
+| Host base URL | Compose `http://127.0.0.1:8080`; kind `http://shortlink-dev.localhost:8081`, `http://shortlink.localhost:8081` |
 | Redirect event status | `redirected`, `not_found`, `expired`, `deleted` |
-| Release state | `proposed`, `tested`, `published`, `deployed_dev`, `deployed_prod`, `rolled_back`, `verified` |
+| Release state | `proposed`, `tested`, `loaded_local`, `published` (CI path only), `deployed_dev`, `deployed_prod`, `rolled_back`, `verified` |
 | Alert name | `ShortLinkHighErrorRate`, `ShortLinkHighLatencyP95`, `ShortLinkPodCrashLooping`, `ShortLinkTargetDown` |
 | Alert severity | `warning`, `critical` |
 | Value source | `ConfigMap`, `Secret`, `environment` |
@@ -196,7 +199,7 @@ Successful response body:
 {
   "id": "11111111-2222-4333-8444-555555555555",
   "code": "Ab3kP91",
-  "short_url": "http://shortlink.localhost:8080/Ab3kP91",
+  "short_url": "http://shortlink.localhost:8081/Ab3kP91",
   "target_url": "https://example.in/careers",
   "created_at": "2026-10-02T10:00:00+05:30"
 }
@@ -224,13 +227,19 @@ Successful response body:
 
 ## Migration policy
 
-- The student MUST use a migration tool or a clearly documented migration command.
+- Use the approved Alembic family; the local entrypoint MUST run a single migration/initialization step after database health and before app readiness, never racing app replicas.
 - A schema change MUST include a migration review note in the pull request.
 - A schema change that changes a business rule MUST include or update an ADR.
 - A migration MUST be reversible when practical.
 - A migration MUST have a test or demo step before production values are updated.
-- Dev migrations MUST run before prod migrations.
+- Validate migrations in Compose/dev before prod promotion. Local startup migrates only the selected database; it does not require the inactive environment to run.
 - Migration logs MUST NOT print database passwords.
+
+## Fictional local seed and persistence
+
+The document 06 local seed is separate from the illustrative multi-row samples above. A clean selected database gets exactly one active link `Ab3kP91` → `https://example.in/careers` at `2026-10-02T00:00:00Z`, no expiry/deletion, click count 0. A repeated start inserts no duplicate, preserves existing IDs/rows, and refuses conflicting seed content rather than overwriting it. POST still uses the secure random code rule; the seed is not a deterministic generation algorithm.
+
+Compose retains `shipit-compose-postgres`; kind retains separate PVCs/bind directories and local cluster/state across stop/start. Reset requires explicit confirmation while stopped and retains backups/caches. TC-LOCAL-001 through TC-LOCAL-004 verify migrations, the exact offline redirect, persistence, and errors. Save Prometheus/alert evidence with query, values/units, timestamps, stage, profile, and active environment; optional artifact checksum evidence must not include secrets.
 
 ## Data quality requirements
 

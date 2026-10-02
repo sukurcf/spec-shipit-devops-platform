@@ -8,12 +8,12 @@ Purpose: This document defines the exact ShipIt interfaces for the ShortLink API
 |---|---|---|---|
 | ShortLink HTTP API | FR-APP-01, FR-APP-02, FR-APP-03, FR-APP-05 | Application developer | Must endpoints, Should endpoints, JSON errors, and Prometheus metrics. |
 | Container and Compose platform | FR-CON-01, FR-CON-02 | DevOps engineer | Secure image and two-service local development stack. |
-| Operational scripts | FR-BASH-01, FR-K8S-03 | SRE | Five Bash commands with arguments, behavior, and exit codes. |
+| Operational scripts/local entrypoints | FR-BASH-01, FR-K8S-03, FR-LOCAL-01 | SRE | Bash commands plus document 06 start/stop/demo/confirmed reset, with stage-aware persistence and failures. |
 | GitHub Actions gates | FR-CI-01, FR-CI-02, FR-CI-03 | DevOps engineer | PR gates and main image publication rules. |
 | Kubernetes resources | FR-K8S-01 to FR-K8S-06 | Platform engineer | Namespaces, app, database, routing, config, probes, and updates. |
 | Helm chart | FR-HELM-01, FR-HELM-02 | DevOps engineer | Chart named `shortlink` with dev and prod values contracts. |
 | Terraform platform | FR-IAC-01, FR-IAC-02 | Platform engineer | Local kind cluster, add-ons, variables, outputs, and one module. |
-| Observability and alerts | FR-OBS-01 to FR-OBS-04 | SRE | Metrics, dashboards, rules, Mailpit delivery, and runbooks. |
+| Observability and alerts | FR-OBS-01 to FR-OBS-04 | SRE | Prometheus HTTP API/CLI metric evidence, rules, Mailpit API delivery evidence, and runbooks; no custom visualization. |
 | Reliability drills | FR-REL-01, FR-REL-02 | SRE | Rolling update, rollback, pod kill, and backup restore procedures. |
 
 ## Environments
@@ -21,9 +21,9 @@ Purpose: This document defines the exact ShipIt interfaces for the ShortLink API
 | Environment | Namespace | Host name | App replicas | Resources | Database |
 |---|---|---|---:|---|---|
 | dev | `shortlink-dev` | `shortlink-dev.localhost` | 1 | Lite app limit 256 MiB; standard app limit 512 MiB | One PostgreSQL 18.x StatefulSet, PVC, and Service in dev namespace. |
-| prod | `shortlink-prod` | `shortlink.localhost` | 2 | Lite app limit 256 MiB per pod; standard app limit 512 MiB per pod | One separate PostgreSQL 18.x StatefulSet, PVC, and Service in prod namespace. |
+| prod | `shortlink-prod` | `shortlink.localhost` | Lite 1 / standard 2 | Lite app limit 256 MiB per pod; standard app limit 512 MiB per pod | Separate PostgreSQL 18.x StatefulSet/PVC/Service; only active environment runs a database pod. |
 
-Host access for tests uses Envoy port-forward to `127.0.0.1:8080`. Commands MUST send `Host: shortlink-dev.localhost` or `Host: shortlink.localhost`. Browser-only demos MAY add hosts-file entries for both names to `127.0.0.1`.
+Stage 1 runs Compose app/PostgreSQL at `127.0.0.1:8080`. Stage 2 kind uses Envoy port-forward at `127.0.0.1:8081` with Host `shortlink-dev.localhost` or `shortlink.localhost`. No hosts-file/DNS or browser demo is required. Both definitions remain, but inactive app/database replicas are 0 with retained PVCs; only one app environment and one local stage run at once. Lite is strictly one-node. Standard HPA/multi-node is separately budgeted Should work.
 
 ## ShortLink API summary
 
@@ -96,7 +96,7 @@ Create link response:
 {
   "id": "11111111-2222-4333-8444-555555555555",
   "code": "Ab3kP91",
-  "short_url": "http://shortlink.localhost:8080/Ab3kP91",
+  "short_url": "http://shortlink.localhost:8081/Ab3kP91",
   "target_url": "https://example.in/careers",
   "created_at": "2026-10-02T10:00:00+05:30"
 }
@@ -123,17 +123,17 @@ Readiness failure example:
 }
 ```
 
-Metrics MUST include at least these metric names: `shortlink_http_requests_total`, `shortlink_http_request_duration_seconds`, `shortlink_redirects_total`, and `shortlink_links_created_total`. The `path` label MUST contain route templates such as `/{code}` and `/api/v1/links`. It MUST NOT contain raw codes, target URLs, or request IDs. `/healthz`, `/readyz`, and `/metrics` traffic is excluded from RED dashboard and alert calculations.
+Metrics MUST include at least these metric names: `shortlink_http_requests_total`, `shortlink_http_request_duration_seconds`, `shortlink_redirects_total`, and `shortlink_links_created_total`. The `path` label MUST contain route templates such as `/{code}` and `/api/v1/links`, never raw codes, target URLs, or request IDs. Exclude `/healthz`, `/readyz`, and `/metrics` from RED query/alert calculations. Successful-redirect evidence selects `status="redirected"` rather than summing missing/expired/deleted outcomes.
 
 ## Gateway host access contract
 
-Terraform installs Envoy Gateway, but hosted GitHub Actions cannot reach the laptop cluster. The operator runs Helm deployment and smoke tests locally. The tested local access path is a `kubectl port-forward` from the Envoy proxy Service to `127.0.0.1:8080`. Smoke tests call `http://127.0.0.1:8080` and set the HTTP Host header to `shortlink-dev.localhost` or `shortlink.localhost`.
+Terraform installs Envoy Gateway from cached artifacts; hosted Actions do not reach the laptop. The operator builds/loads images and runs Helm locally without registry credentials. The access contract is an Envoy proxy Service port-forward to `127.0.0.1:8081` (`--address 127.0.0.1`, service port 80). Smoke tests set the selected Host header; an inactive route cannot reach another environment. Follow no external redirect.
 
 | Target | Command shape | Expected response |
 |---|---|---|
-| Prod health | curl with Host `shortlink.localhost` to `http://127.0.0.1:8080/healthz` | 200 from prod. |
-| Dev health | curl with Host `shortlink-dev.localhost` to `http://127.0.0.1:8080/healthz` | 200 from dev. |
-| Prod redirect | curl with Host `shortlink.localhost` to `http://127.0.0.1:8080/Ab3kP91` | 302 with `Location`. |
+| Prod health | curl with Host `shortlink.localhost` to `http://127.0.0.1:8081/healthz` | 200 when prod active. |
+| Dev health | curl with Host `shortlink-dev.localhost` to `http://127.0.0.1:8081/healthz` | 200 when dev active. |
+| Prod redirect | curl without `-L`, Host `shortlink.localhost`, to `http://127.0.0.1:8081/Ab3kP91` | 302 with `Location: https://example.in/careers`; no external request. |
 
 ## Runtime configuration contract
 
@@ -141,7 +141,7 @@ Terraform installs Envoy Gateway, but hosted GitHub Actions cannot reach the lap
 |---|---|---|---|---|---|
 | `DATABASE_URL` | secret string | Yes | None | Secret or local env file | PostgreSQL connection string. |
 | `APP_ENV` | enum string | Yes | `dev` | ConfigMap or env file | Runtime environment label. |
-| `BASE_URL` | URL string | No | Environment host with port 8080 for local demos | ConfigMap or env file | Builds returned `short_url`. Dev uses `http://shortlink-dev.localhost:8080`; prod uses `http://shortlink.localhost:8080`. |
+| `BASE_URL` | URL string | No | Stage-specific local URL | ConfigMap or ignored env file | Compose `http://127.0.0.1:8080`; kind dev `http://shortlink-dev.localhost:8081`, prod `http://shortlink.localhost:8081`. |
 | `API_KEY` | secret string | No | None | Secret | Required only for optional delete endpoint. |
 | `LOG_LEVEL` | enum string | No | `INFO` | ConfigMap | Controls JSON log verbosity. |
 | `REQUEST_ID_HEADER` | string | No | `X-Request-ID` | ConfigMap | Names the incoming request ID header. |
@@ -159,6 +159,7 @@ Terraform installs Envoy Gateway, but hosted GitHub Actions cannot reach the lap
 | Helm validation | Pull request and push to `main` | Run Helm lint and render the chart for dev and prod values. | Fails on lint errors or missing chart metadata. |
 | Kubernetes validation | Pull request and push to `main` | Validate all rendered Kubernetes and custom resources with kubeconform and version-matched CRD schemas. | Fails if any rendered manifest is invalid, skipped, or missing a schema. |
 | Terraform validation | Pull request and push to `main` | Run Terraform format check and validate root plus module. | Fails on format or validation errors. |
+| Local acceptance | Pull request and push to `main` | Prepare downloads/caches, then deny external egress while permitting loopback/container/cluster traffic; run TC-LOCAL-001 to TC-LOCAL-004 for Compose and one-node kind. | Fails on startup/seed/demo/persistence/errors, a registry pull, or a local-contract mismatch. |
 | Image publish | Push to `main` after gates | Push image to GHCR with SemVer tag from the app version and short SHA tag. | Runs only after all required gates pass; fails if a SemVer tag points to another digest. |
 | Local post-deploy smoke | Operator after each local Helm deployment | Run health, readiness, create-link, redirect, and metrics checks through Envoy port-forward. | Fails deployment evidence if any check fails. |
 
@@ -167,8 +168,8 @@ Terraform installs Envoy Gateway, but hosted GitHub Actions cannot reach the lap
 | Resource | Environment | Name rule | Required settings | Requirement IDs |
 |---|---|---|---|---|
 | Namespace | dev and prod | Exact names `shortlink-dev`, `shortlink-prod` | Labels identify app and environment. | FR-K8S-01, BR-18 |
-| Deployment | dev and prod | ShortLink app release name includes environment | Dev 1 replica; prod 2 replicas; prod `maxUnavailable: 0`; rolling update. | FR-K8S-01, FR-K8S-06 |
-| App container | dev and prod | One main API container | Non-root, read-only root filesystem, drop ALL capabilities, CPU and memory requests and limits. | FR-K8S-04, BR-23 |
+| Deployment | dev and prod | ShortLink app release includes environment | Active dev 1; prod lite 1/standard 2; inactive 0; prod `maxUnavailable: 0`, `maxSurge: 1`. | FR-K8S-01, FR-K8S-06 |
+| App container | dev and prod | Main API container named `app` | Non-root, read-only root, drop ALL capabilities, CPU/memory requests/limits and documented surge reserve. | FR-K8S-04, BR-23 |
 | Liveness probe | dev and prod | App pod probe | Uses `/healthz`; failure restarts the container. | FR-K8S-04, BR-24 |
 | Readiness probe | dev and prod | App pod probe | Uses `/readyz`; 503 removes pod from Service endpoints. | FR-K8S-04, BR-24 |
 | Startup probe | dev and prod | App pod probe | Uses `/healthz`; protects slow startup. | FR-K8S-04, BR-24 |
@@ -178,34 +179,38 @@ Terraform installs Envoy Gateway, but hosted GitHub Actions cannot reach the lap
 | HTTPRoute | dev and prod | One route per host | Dev host routes to dev Service; prod host routes to prod Service. | FR-K8S-02, BR-21 |
 | ConfigMap | dev and prod | App config per environment | Non-secret env values only. | FR-K8S-03, BR-09 |
 | Secret | dev and prod | App secret per environment | Created from ignored local file; never committed. | FR-K8S-03, BR-22 |
-| StatefulSet | dev and prod | PostgreSQL per namespace | PostgreSQL 18.x image line; no operator; no Bitnami image or chart. | FR-K8S-05, BR-25 |
-| PVC | dev and prod | PostgreSQL data per namespace | Separate storage for dev and prod. | FR-K8S-05, BR-19 |
-| ServiceMonitor | dev and prod | ShortLink metrics per namespace | Lets Prometheus scrape `/metrics`. | FR-OBS-01 |
+| StatefulSet | dev and prod | PostgreSQL per namespace | PostgreSQL 18.x; active 1/inactive 0; no operator/Bitnami; migrate/seed selected database. | FR-K8S-05, BR-25 |
+| PVC | dev and prod | PostgreSQL data per namespace | Retained separate PVCs backed by ignored local bind directories; stop never deletes storage. | FR-K8S-05, BR-19 |
+| ServiceMonitor | Active environment | ShortLink metrics per namespace | Scrapes active `/metrics`; no inactive target-down alert. | FR-OBS-01 |
 | PrometheusRule | monitoring | Mandatory alert group | Four required alert rules and runbook annotations. | FR-OBS-03, BR-32 |
-| Mailpit | monitoring | Local mail receiver | Image line 1.31.x, SMTP port 1025, UI port 8025, and Service. | FR-OBS-04, BR-33 |
+| Mailpit | monitoring | Local mail receiver | Image 1.31.x, internal SMTP 1025, loopback HTTP API 8025, Service; unmodified built-in console optional. | FR-OBS-04, BR-33 |
 | PodDisruptionBudget | prod | Prod app PDB | Should item with `minAvailable: 1`. | FR-K8S-07, BR-56 |
 
 ## Local bootstrap order
 
 | Step | Required action |
 |---|---|
-| 1 | Create the kind cluster and platform add-on namespaces. |
-| 2 | Install Envoy Gateway, Gateway API CRDs, kube-prometheus-stack, and Mailpit. |
-| 3 | Create the dev Secret with `scripts/create-secrets.sh` from an ignored local file. |
-| 4 | Create the prod Secret with `scripts/create-secrets.sh` from an ignored local file. |
-| 5 | Install or upgrade the Helm releases for dev and prod. |
-| 6 | Start Envoy port-forward and run local smoke tests. |
+| 1 | Prepare downloads/cache and ignored secrets; start Compose app/PostgreSQL with `make local-start`, run demo, then stop. |
+| 2 | Start one-node kind through local Terraform and cached charts/CRDs/providers; install Envoy, Prometheus/Alertmanager, Mailpit. |
+| 3 | Load app/add-on/hook and rollback images with `kind load docker-image`; do not require GHCR. |
+| 4 | Create dev/prod Secrets from ignored files; install both definitions with inactive workloads 0. |
+| 5 | Activate one environment with its profile overlay, run migrations/seed once, and wait for readiness. |
+| 6 | Start loopback port-forwards, run API/metric/alert checks, and prove stop/start persistence; switch environments sequentially. |
 
 ## Helm chart contract
 
-Chart name MUST be `shortlink`. The chart MUST include dev and prod values files and a `helm test` hook that verifies `/healthz` and `/readyz`.
+Chart name MUST be `shortlink`. Include dev/prod values and lite/standard/local-image overlays. Run the `/healthz`/`/readyz` `helm test` hook only for the active release. Set both app and database replicas to 0 when inactive, retain PVCs, and do not create a ServiceMonitor for an inactive release.
+
+For initialization only, the entrypoint may apply a database-only phase (selected database 1/app 0), run one Alembic job/exec step, then apply the active profile counts. Steady standard overrides set app CPU request/limit 250m/1000m, memory request/limit 256Mi/512Mi, and PostgreSQL limit 1Gi; lite uses the defaults below. Both profiles reserve one additional app pod for rollout.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `environment` | string enum | `dev` | Selects names, labels, and host behavior. |
-| `image.repository` | string | Student GHCR path | App image repository. |
-| `image.tag` | string | Short SHA or SemVer | App image tag. |
-| `replicaCount` | integer | 1 | App replica count; prod values set 2. |
+| `environmentActive` | boolean | `true` | Selected environment only; false renders 0 app/database replicas with retained storage. |
+| `image.repository` | string | `shortlink` in local overlay | Loaded local repository; separate CI-delivery overlay may use student GHCR path. |
+| `image.tag` | string | `local-<short-sha>` in local overlay | Immutable built/loaded tag; no registry-only default. |
+| `image.pullPolicy` | enum | `IfNotPresent` | Loaded local tags must run without pulls; `Never` permitted in offline lab; no `Always`. |
+| `replicaCount` | integer | 1 | Active dev 1/prod lite 1/standard 2; inactive 0. |
 | `host.name` | string | `shortlink-dev.localhost` | Gateway host name. |
 | `resources.requests.cpu` | quantity string | `100m` | App CPU request. |
 | `resources.requests.memory` | quantity string | `128Mi` | App memory request. |
@@ -214,19 +219,21 @@ Chart name MUST be `shortlink`. The chart MUST include dev and prod values files
 | `database.image` | string | PostgreSQL 18.x pinned image | Database image line. |
 | `database.storage.size` | quantity string | `1Gi` | PVC size for local data. |
 | `database.resources.limits.memory` | quantity string | `512Mi` | Lite database memory limit. |
+| `database.replicaCount` | integer | 1 when active | Exactly 1 active/0 inactive, with separate dev/prod PVCs. |
 | `config.appEnv` | string | `dev` | Sets `APP_ENV`. |
-| `config.baseUrl` | string | `http://shortlink-dev.localhost:8080` | Sets `BASE_URL`; prod values use `http://shortlink.localhost:8080`. |
+| `config.baseUrl` | string | `http://shortlink-dev.localhost:8081` | kind base URL; prod uses `http://shortlink.localhost:8081`; Compose uses loopback 8080. |
 | `secret.name` | string | `shortlink-secret` | Existing Secret consumed by app. |
 | `probes.livenessPath` | string | `/healthz` | Liveness endpoint. |
 | `probes.readinessPath` | string | `/readyz` | Readiness endpoint. |
 | `security.runAsNonRoot` | boolean | `true` | Enforces non-root runtime. |
 | `security.readOnlyRootFilesystem` | boolean | `true` | Hardens root filesystem. |
-| `serviceMonitor.enabled` | boolean | `true` | Creates ServiceMonitor. |
+| `serviceMonitor.enabled` | boolean | `true` when active | Discover active environment only; inactive excluded from alerts. |
 | `rollingUpdate.maxUnavailable` | integer | 0 | Keeps prod available during updates. |
+| `rollingUpdate.maxSurge` | integer | 1 | Requires one extra app pod's proposed memory reserve in either profile. |
 
 ## Terraform module contract
 
-One apply MUST create the kind cluster and install Envoy Gateway plus kube-prometheus-stack through the Helm provider. Local state MUST be ignored by Git.
+After the Compose stage, one apply MUST create/resume kind and install Envoy Gateway/kube-prometheus-stack through the Helm provider using cached providers, local chart archives/dependencies, and CRDs. Local state MUST be ignored. Configure loopback Kubernetes API access and documented data mounts; no cloud provider/account is used. Missing artifacts fail before network attempts.
 
 ### Module inputs
 
@@ -234,6 +241,11 @@ One apply MUST create the kind cluster and install Envoy Gateway plus kube-prome
 |---|---|---|---|---|
 | `cluster_name` | string | `shipit-local` | Non-empty string | kind cluster name. |
 | `profile` | string | `lite` | Must be `lite` or `standard` | Selects add-on retention and optional components. |
+| `node_count` | integer | 1 | Lite exactly 1; standard 1 Must or 3 Should after pre-check | Prevents accidental 8 GB multi-node startup. |
+| `api_server_address` | string | `127.0.0.1` | Loopback only | Prevents public Kubernetes API exposure. |
+| `api_server_port` | integer | 6445 | Fixed local port, checked free | Avoids collision with app/monitoring endpoints. |
+| `artifact_cache_dir` | path | `.local/cache` | Required prepared artifacts present | Local provider mirror, chart archives/dependencies, and schemas. |
+| `grafana_enabled` | boolean | `false` | False in lite; optional standard only | Unmodified operations tooling, not dashboard authoring. |
 | `kubernetes_version` | string | `1.37.x` | Must start with `1.37` | Pins the kind node Kubernetes line. |
 | `kind_version` | string | `0.33.x` | Must start with `0.33` | Documents expected kind version. |
 | `envoy_gateway_version` | string | `1.9.x` | Must start with `1.9` | Installs maintained Gateway implementation. |
@@ -250,7 +262,7 @@ One apply MUST create the kind cluster and install Envoy Gateway plus kube-prome
 | `cluster_name` | string | Confirms the kind cluster name. |
 | `dev_host` | string | Shows `shortlink-dev.localhost`. |
 | `prod_host` | string | Shows `shortlink.localhost`. |
-| `grafana_url` | string | Gives the local Grafana URL after port-forward instructions. |
+| `gateway_url` | string | Gives `http://127.0.0.1:8081` and selected Host-header instructions. |
 | `prometheus_url` | string | Gives the local Prometheus URL after port-forward instructions. |
 | `alertmanager_url` | string | Gives the local Alertmanager URL after port-forward instructions. |
 | `mailpit_url` | string | Gives the local Mailpit URL. |
@@ -261,17 +273,17 @@ One apply MUST create the kind cluster and install Envoy Gateway plus kube-prome
 
 | Metric name | Type | Labels | Purpose |
 |---|---|---|---|
-| `shortlink_http_requests_total` | counter | `method`, `path`, `status_code`, `environment` | Request rate and error-rate panels. The `path` value is a route template only. |
-| `shortlink_http_request_duration_seconds` | histogram | `method`, `path`, `environment` | p50, p95, and p99 latency panels. The `path` value is a route template only. |
+| `shortlink_http_requests_total` | counter | `method`, `path`, `status_code`, `environment` | Request/error API queries. The `path` value is a route template only. |
+| `shortlink_http_request_duration_seconds` | histogram | `method`, `path`, `environment` | p50/p95/p99 API queries. The `path` value is a route template only. |
 | `shortlink_redirects_total` | counter | `status`, `environment` | Redirect outcome count. |
 | `shortlink_links_created_total` | counter | `environment` | Link creation count. |
-| Kubernetes CPU metric | gauge | pod and namespace labels | Resource dashboard. |
-| Kubernetes memory metric | gauge | pod and namespace labels | Resource dashboard. |
-| Kubernetes restart metric | counter | pod and namespace labels | Restart dashboard and crash-loop diagnosis. |
+| Kubernetes CPU metric | counter | pod, namespace, container labels | Rate query gives CPU cores used. |
+| Kubernetes memory metric | gauge | pod, namespace, container labels | Query gives working-set bytes. |
+| Kubernetes restart metric | counter | pod, namespace, container labels | Restart query and crash-loop diagnosis. |
 
-### Grafana dashboard panels
+### Prometheus HTTP API/CLI evidence
 
-| Panel | Query intent in words | Environment filter | Requirement IDs |
+| Evidence | Query intent in words | Environment filter | Requirement IDs |
 |---|---|---|---|
 | Request rate | Requests per second by route and status class. | dev and prod | FR-OBS-02, BR-31 |
 | Error rate | 5xx responses divided by total responses. | prod default | FR-OBS-02, FR-OBS-03 |
@@ -282,7 +294,21 @@ One apply MUST create the kind cluster and install Envoy Gateway plus kube-prome
 | CPU usage | CPU by pod compared with requests. | dev and prod | FR-OBS-02 |
 | Memory usage | Memory by pod compared with limits. | dev and prod | FR-OBS-02 |
 | Pod restarts | Restart count by pod. | dev and prod | FR-OBS-02 |
-| Optional SLO | Availability against 99.5% and p95 against 300 ms. | prod | FR-SLO-01 |
+| Optional SLO | Saved queries/recording rules against 99.5% availability and p95 300 ms; insufficient retained history is stated, not fabricated. | active prod | FR-SLO-01 |
+
+Use `GET /api/v1/query` on `127.0.0.1:9090`, e.g. `curl --get --data-urlencode 'query=sum(shortlink_redirects_total{environment="prod",status="redirected"})' http://127.0.0.1:9090/api/v1/query`. Save `status: success`, `data.resultType`, labels, timestamps, values/units, and the query under student `docs/evidence/`. Empty series are not zero: explain `no-data` and verify target readiness. Replace `prod`/`shortlink-prod` with the selected active environment; exclude probes and inactive namespaces.
+
+| Required quantity | PromQL contract (active prod example) | Units |
+|---|---|---|
+| Request rate | Five-minute throughput: `sum(rate(shortlink_http_requests_total{environment="prod",path!="/healthz",path!="/readyz",path!="/metrics"}[5m]))` | requests/second |
+| 5xx percentage | Server-error fraction with a guarded denominator: `100 * sum(rate(shortlink_http_requests_total{environment="prod",status_code=~"5..",path!="/healthz",path!="/readyz",path!="/metrics"}[5m])) / clamp_min(sum(rate(shortlink_http_requests_total{environment="prod",path!="/healthz",path!="/readyz",path!="/metrics"}[5m])), 1e-9)` | percent; expected 404 is not 5xx |
+| p50/p95/p99 | `histogram_quantile(q, sum by (le) (rate(shortlink_http_request_duration_seconds_bucket{environment="prod",path!="/healthz",path!="/readyz",path!="/metrics"}[5m])))` with separate calls for q=0.50/0.95/0.99 | seconds; multiply by 1000 for ms |
+| Successful redirects | Only completed 302 outcomes: `sum(shortlink_redirects_total{environment="prod",status="redirected"})` | counter; compare before/after in same process lifetime |
+| App CPU | Convert cumulative CPU seconds to cores consumed: `sum(rate(container_cpu_usage_seconds_total{namespace="shortlink-prod",container="app"}[5m]))` | cores |
+| App memory | Current app-container working set: `sum(container_memory_working_set_bytes{namespace="shortlink-prod",container="app"})` | bytes |
+| App restarts | Count per current app pod: `sum by (pod) (kube_pod_container_status_restarts_total{namespace="shortlink-prod",container="app"})` | restarts; pod labels identify the drill target |
+
+In the quiet 100-redirect/10-miss fixture window, RED request counter delta is 110, `status="redirected"` delta 100, and 5xx delta 0; initialize absent status series to 0 for this fixture or explicitly interpret no observed 5xx. Actual rates/quantiles/resource values are measured and saved, not invented. No Grafana dashboard/panel/visualization/Geomap implementation or export is required or permitted; an unmodified built-in standard console is optional operations tooling only.
 
 ## Alert rules
 
@@ -295,12 +321,14 @@ One apply MUST create the kind cluster and install Envoy Gateway plus kube-prome
 
 Alert messages MUST include service, environment, severity, summary, current value, threshold, and runbook link. Delivery is at-least-once. The stable alert identity is alert name plus labels. Tests expect at least 1 matching Mailpit message; duplicates are allowed. Failed delivery is verified through Alertmanager notification-failure metrics or logs. Alertmanager uses SMTP smarthost `mailpit.monitoring:1025`, sender `alertmanager@example.in`, receiver `sre@example.in`, and no TLS for local Mailpit. A webhook receiver SHOULD exist as an additional route.
 
+Scope rules to the active environment only. Target-down must detect zero healthy targets or missing `up` series for that active release; an intentionally inactive release has no target-down rule. Save Prometheus `/api/v1/alerts`, Alertmanager `/api/v2/alerts`, and Mailpit `/api/v1/messages` JSON with identity/labels/state/runbook link. Recorded local series prove threshold boundaries; live drills stay local. After readiness removes app endpoints, direct app failure JSON can be checked through in-pod localhost requests; Gateway 503 need not contain the app's JSON body.
+
 ## Runbook list
 
 | Runbook | Alert | Required sections |
 |---|---|---|
-| High error rate | `ShortLinkHighErrorRate` | Symptoms, impact, diagnosis with dashboard and log checks, mitigation with rollback condition, escalation, evidence to collect. |
-| High latency p95 | `ShortLinkHighLatencyP95` | Symptoms, impact, diagnosis with RED dashboard, readiness, and resource checks, mitigation, escalation, evidence to collect. |
+| High error rate | `ShortLinkHighErrorRate` | Symptoms, impact, Prometheus API/CLI queries and log checks, mitigation/rollback condition, escalation, saved evidence. |
+| High latency p95 | `ShortLinkHighLatencyP95` | Symptoms, impact, RED queries, readiness/resource commands, mitigation, escalation, saved evidence. |
 | Pod crash looping | `ShortLinkPodCrashLooping` | Symptoms, impact, diagnosis with pod events and config or secret checks, mitigation with previous-image rollback, escalation, evidence to collect. |
 | Target down | `ShortLinkTargetDown` | Symptoms, impact, diagnosis with ServiceMonitor, endpoint, and readiness checks, mitigation, escalation, evidence to collect. |
 
@@ -308,9 +336,9 @@ Alert messages MUST include service, environment, severity, summary, current val
 
 | Drill | Preconditions | Procedure in words | Evidence | Success rule |
 |---|---|---|---|---|
-| Zero-downtime rolling update | Prod has 2 ready replicas. Standard uses 50 VUs on a 16 GB profile; lite uses 20 VUs and records results. | Start k6 with redirect following disabled, deploy a new SHA image tag, wait for rollout, stop k6, save summary. | Timestamp, profile, VU count, old and new tags, rollout status, k6 report. | Both profiles have 0 failed requests. The p95 acceptance threshold applies to the 50-VU standard run. |
-| Rollback | A known bad release is deployed to prod. | Trigger Helm rollback to previous revision and run smoke test. | Failed revision, restored revision, smoke output, dashboard screenshot. | Prod health and redirect smoke tests pass. |
-| Pod kill self-healing | Prod has 2 ready app pods. | Delete one app pod and watch replacement become ready. | Start time, replacement ready time, pod names. | Replacement is ready within 120 seconds. |
+| Zero-downtime rolling update | Only prod active: lite 1 replica/20 VUs or standard 2/50 VUs. One extra pod's surge memory and old/new images prepared. | Start k6 without redirect following; update to a distinct loaded local SHA tag, `maxUnavailable=0/maxSurge=1`; save rollout/k6 output. | Time, profile, replicas/VUs, proposed/observed peaks, old/new tags and pull policy, k6 summary. | Both profiles have 0 failed requests. p95 threshold applies to standard 50-VU run. |
+| Rollback | Known bad release and prior good image loaded locally. | Roll back to previous Helm revision and run smoke tests without registry access. | Failed/restored revision, local tags, smoke output, saved metrics/alert state. | Health/redirect smoke passes; no pull/download. |
+| Pod kill self-healing | Active prod has profile count (lite 1, standard 2). | Delete one app pod and watch replacement become ready. | Start/replacement times, pod names, kubectl output. | Replacement within 120 seconds; lite may have temporary traffic interruption (this is not its zero-downtime rolling drill). |
 | Backup restore | A backup file exists and has sample code `Ab3kP91`. | Restore into chosen local target and compare row count. | Backup file name, restore time, row count before and after. | Restored target contains expected rows and backup file remains. |
 
 ## Script specifications
@@ -319,20 +347,20 @@ Each script MUST use strict Bash behavior, have help text, and pass ShellCheck w
 
 | Script | Arguments | Behavior | Exit codes |
 |---|---|---|---|
-| `bootstrap.sh` | `--profile lite|standard`, `--check-only`, `--help` | Checks Docker, Docker Compose v5.x, Python 3.12.x, uv 0.12.x, kind 0.33.x, kubectl 1.37.x, Helm 4.x, Terraform 1.16.x, Trivy 0.75.x, Gitleaks 8.30.x, k6 2.x, and available RAM. Recommends lite profile below 16 GB. | 0 all required checks pass; 1 missing or wrong prerequisite; 2 invalid argument. |
-| `smoke-test.sh` | `--base-url URL`, `--host HOST`, `--timeout SECONDS`, `--help` | Checks `/healthz`, `/readyz`, creates a link to `https://example.in/careers`, follows the short link, and checks metrics are exposed. | 0 all smoke checks pass; 1 endpoint or redirect failed; 2 invalid argument. |
-| `db-backup.sh` | `--env dev|prod`, `--output-dir PATH`, `--retention-days 7`, `--help` | Runs dump inside the selected environment PostgreSQL pod through `kubectl exec`, streams the file to the host, names it with `YYYYMMDD-HHMMSS`, and removes backups older than 7 days. | 0 backup succeeds; 1 backup or rotation failed; 2 invalid argument; 3 database connection failed. |
-| `db-restore.sh` | `--env dev|prod`, `--file PATH`, `--confirm ENV`, `--help` | Streams the named backup from the host into the selected environment PostgreSQL pod through `kubectl exec` only after explicit environment confirmation. Does not delete the backup file. | 0 restore succeeds; 1 restore failed; 2 invalid argument or missing confirmation; 3 backup file missing. |
+| `bootstrap.sh` | `--stage compose|kind`, `--profile lite|standard`, `--check-only`, `--help` | Default Compose checks Bash/make, Docker/Compose v5.x, Python 3.12.x, uv 0.12.x, ports/disk/RAM. kind additionally checks kind 0.33.x/kubectl 1.37.x/Helm 4.x/Terraform 1.16.x and caches; Trivy/Gitleaks/k6 checked for CI/drills, not stage 1 startup. Recommend lite below 16 GB. | 0 pass; 1 missing/wrong prerequisite; 2 invalid argument. Local make wrapper reports named prerequisite failures as exit 2. |
+| `smoke-test.sh` | `--base-url URL`, `--host HOST`, `--timeout SECONDS`, `--help` | Check health/readiness, create fictional link, request its short code without following Location, assert 302/header, and inspect metrics. Host is optional for Compose and required for kind. | 0 pass; 1 endpoint/redirect failure; 2 invalid argument. |
+| `db-backup.sh` | `--stage compose|kind`, `--env dev|prod`, `--output-dir PATH`, `--retention-days 7`, `--help` | Stream dump via Compose exec (stage 1 dev) or kubectl exec (selected active stage 2 database); name `YYYYMMDD-HHMMSS`; rotate after 7 days. | 0 success; 1 dump/rotation failure; 2 invalid stage/environment; 3 database unavailable. |
+| `db-restore.sh` | `--stage compose|kind`, `--env dev|prod`, `--file PATH`, `--confirm ENV`, `--help` | Restore via selected stage's exec after explicit environment confirmation; refuse unavailable/inactive target and retain backup file. | 0 success; 1 restore failure; 2 usage/confirmation; 3 missing backup or database unavailable, with distinct messages. |
 | `create-secrets.sh` | `--env dev|prod`, `--file PATH`, `--help` | Reads an ignored local key-value file and creates or updates the Kubernetes Secret for the selected environment. | 0 success; 1 failure; 2 `secret-file-missing`. |
 
 Example single commands that a student may run:
 
 ```bash
-./scripts/smoke-test.sh --base-url http://127.0.0.1:8080 --host shortlink.localhost
+./scripts/smoke-test.sh --base-url http://127.0.0.1:8081 --host shortlink.localhost
 ```
 
 ```bash
-./scripts/db-backup.sh --env prod --output-dir backups --retention-days 7
+./scripts/db-backup.sh --stage kind --env prod --output-dir .local/backups --retention-days 7
 ```
 
 ## Security and dependency gates
@@ -347,9 +375,11 @@ Example single commands that a student may run:
 
 ## Local to AWS mapping
 
+Interview theory only. No cloud account, public deployment exercise, budget/free-tier experiment, or bonus cloud resource exists in v1.1.
+
 | Local ShipIt item | AWS equivalent | Interview point |
 |---|---|---|
-| kind cluster | EKS or k3s on EC2 for the optional demo | Managed control planes reduce operations work but cost money. |
+| kind cluster | EKS | Compare a local control plane with managed operations; no EC2/k3s deployment task. |
 | GHCR | ECR | Registry permissions use IAM policies. |
 | PVC | EBS volume | Storage class choices affect availability and cost. |
 | Gateway API and Envoy Gateway | AWS load balancer with EKS integration | Public routing needs security groups and subnets. |

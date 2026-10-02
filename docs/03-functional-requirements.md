@@ -13,6 +13,7 @@ Purpose: This document defines ShipIt functional requirements, acceptance criter
 | FR-CON-01 | Build a secure application image | Must | DevOps engineer | BR-10, BR-11 |
 | FR-CON-02 | Run local development with Compose | Must | Application developer | BR-12 |
 | FR-BASH-01 | Provide operational shell scripts | Must | SRE, DevOps engineer | BR-13, BR-14 |
+| FR-LOCAL-01 | Local Compose/kind operation contract | Must | Developer, Platform engineer | BR-57 |
 | FR-CI-01 | Run pull request quality gates | Must | Developer, DevOps engineer | BR-15 |
 | FR-CI-02 | Publish main branch images to GHCR | Must | DevOps engineer | BR-16 |
 | FR-CI-03 | Protect the main branch | Must | Engineering manager | BR-15, BR-17 |
@@ -27,7 +28,7 @@ Purpose: This document defines ShipIt functional requirements, acceptance criter
 | FR-IAC-01 | Provision the local platform with Terraform | Must | Platform engineer | BR-28, BR-29 |
 | FR-IAC-02 | Use state, variables, outputs, and one module | Must | Platform engineer | BR-29 |
 | FR-OBS-01 | Install kube-prometheus-stack | Must | SRE | BR-30 |
-| FR-OBS-02 | Show RED and resource dashboards | Must | SRE, Engineering manager | BR-07, BR-31 |
+| FR-OBS-02 | Query RED and resource evidence | Must | SRE, Engineering manager | BR-07, BR-31 |
 | FR-OBS-03 | Define mandatory alert rules | Must | SRE | BR-32 |
 | FR-OBS-04 | Deliver alerts to Mailpit e-mail | Must | SRE | BR-33 |
 | FR-REL-01 | Write alert runbooks | Must | SRE | BR-34 |
@@ -44,7 +45,7 @@ Purpose: This document defines ShipIt functional requirements, acceptance criter
 | FR-K8S-07 | Add prod PodDisruptionBudget | Should | Platform engineer, SRE | BR-56 |
 | FR-TEST-01 | Add deeper platform tests and SBOM | Should | DevOps engineer | BR-45 |
 | FR-SECRETS-01 | Use SOPS or Sealed Secrets | Should | DevOps engineer | BR-46 |
-| FR-SLO-01 | Add SLO dashboard and burn alerts | Should | SRE | BR-47 |
+| FR-SLO-01 | Add SLO queries and burn alerts | Should | SRE | BR-47 |
 | FR-POST-01 | Write a postmortem and DORA notes | Should | Engineering manager | BR-48 |
 | FR-HELM-03 | Add helm-unittest | Should | DevOps engineer | BR-45 |
 | FR-IAC-03 | Add Terraform tests and lint | Should | Platform engineer | BR-45 |
@@ -53,7 +54,7 @@ Purpose: This document defines ShipIt functional requirements, acceptance criter
 | FR-ROLLOUT-01 | Try canary delivery with Argo Rollouts | Could | SRE | BR-51 |
 | FR-SIGN-01 | Sign images and enforce policy | Could | DevOps engineer | BR-52 |
 | FR-OTEL-01 | Add OpenTelemetry tracing | Could | SRE | BR-53 |
-| FR-AWS-01 | Demo k3s on one AWS free-tier EC2 instance | Could | Platform engineer | BR-54 |
+| FR-LOCAL-02 | Validate offline artifact/rollback inventory | Could | Platform engineer | BR-54 |
 | FR-DBOP-01 | Evaluate CloudNativePG | Could | Platform engineer | BR-55 |
 
 ## Must functional requirements
@@ -121,12 +122,12 @@ Acceptance criteria:
 
 Priority: Must. Roles: Application developer. Linked BRs: BR-12.
 
-Description: Docker Compose MUST start the app and PostgreSQL for local development. Compose health checks MUST wait for PostgreSQL before the app is considered ready. The local stack MUST use pinned image tags.
+Description: Docker Compose MUST be the first runnable local stage: app plus PostgreSQL, local migrations/fictional seed, loopback app port 8080, persistent named database volume, and proposed memory caps from document 06. Compose health checks MUST wait for PostgreSQL before the app is considered ready. Use a locally built app image and pinned PostgreSQL image; no GitHub/GHCR credential is required.
 
 Acceptance criteria:
 
 - Given Docker is running, when the developer starts the Compose stack, then app and PostgreSQL services become healthy.
-- Given PostgreSQL credentials are missing from the local env file, when Compose starts, then the app is unhealthy and logs `config-missing-database-url`.
+- Given required credentials are missing from an ignored local env file, when the local entrypoint runs, then it exits 2 with `secret-value-missing: DATABASE_URL` before starting services and prints no secret values.
 
 ### FR-BASH-01 — Provide operational shell scripts
 
@@ -140,11 +141,24 @@ Acceptance criteria:
 - Given no backup file is supplied, when `db-restore.sh` runs, then it exits non-zero with usage text and changes no database.
 - Given a backup is older than 7 days, when `db-backup.sh` completes, then the old backup is removed.
 
+### FR-LOCAL-01 — Local Compose/kind operation contract
+
+Priority: Must. Roles: Developer, Platform engineer. Linked BRs: BR-57.
+
+Students MUST implement the start/stop/demo/reset contract in document 06. Stage 1 is Compose; stage 2 is local kind using a locally built, immutable SHA-derived tag and `kind load docker-image`, with `imagePullPolicy: IfNotPresent` (or `Never` for the isolated lab). GitHub/GHCR delivery is a separate CI exercise. Local startup MUST initialize migrations and fictional seed once, retain data across stop/start, bind published ports to loopback, and never download/fall back to registry delivery when isolated.
+
+Acceptance criteria:
+- Given dependencies/images/charts/providers are prepared, when `make local-start` runs on a clean clone, then Compose app/PostgreSQL become healthy and stdout includes `local-ready stage=compose env=dev`.
+- Given Compose is stopped and a one-node kind lite profile is selected, when `make local-start STAGE=kind PROFILE=lite ENV=prod` runs, then only prod app/database workloads run, a loaded local image is used, and `local-ready stage=kind env=prod` is printed.
+- Given external egress is denied after preparation, when either stage's local demo runs, then the seeded `Ab3kP91` returns 302 with `Location: https://example.in/careers` without following that URL.
+- Given a saved code exists, when local stop/start runs for the same stage/environment, then it remains queryable; an unconfirmed reset changes no data.
+- Given Docker is unavailable or a cached artifact is missing, when startup runs, then it exits 2 with `local-dependency-unavailable: docker` or `local-artifact-missing: <path>` and no external request.
+
 ### FR-CI-01 — Run pull request quality gates
 
 Priority: Must. Roles: Developer, DevOps engineer. Linked BRs: BR-15.
 
-Description: GitHub Actions MUST run on every pull request and every push to `main`. It MUST run Ruff, mypy, hadolint, ShellCheck, tests with coverage, image build, Trivy image scan, Gitleaks, Helm lint, kubeconform, Terraform format check, and Terraform validate.
+Description: GitHub Actions MUST run on every pull request and every push to `main`. It MUST run Ruff, mypy, hadolint, ShellCheck, tests with coverage, image build, Trivy image scan, Gitleaks, Helm lint, kubeconform, Terraform format check, Terraform validate, and local acceptance for both Compose and one-node kind. Download/cache preparation precedes the isolated acceptance phase.
 
 Acceptance criteria:
 
@@ -156,7 +170,7 @@ Acceptance criteria:
 
 Must release requirement for the DevOps engineer. Linked rule: BR-16.
 
-Description: The `main` branch workflow MUST publish ShortLink images to GHCR. The SemVer tag MUST come from the declared application version. Every `main` build MUST also publish the short commit SHA tag. The workflow MUST reject reuse of a SemVer tag for a different digest. Prod deployments MUST pin the short SHA tag or image digest.
+Description: The separate connected `main` branch workflow MUST publish ShortLink images to GHCR. The SemVer tag MUST come from the declared application version. Every `main` build MUST also publish the short commit SHA tag. Reject reuse of a SemVer tag for a different digest; registry delivery pins short SHA or digest. Local startup instead pins a loaded `shortlink:local-<short-sha>` tag and requires no registry login, GitHub availability, or published image.
 
 Acceptance criteria:
 
@@ -179,23 +193,24 @@ Acceptance criteria:
 
 Priority: Must. Roles: Platform engineer. Linked BRs: BR-18, BR-19.
 
-Description: The platform MUST create namespaces `shortlink-dev` and `shortlink-prod` in kind. Dev MUST run 1 app replica. Prod MUST run 2 app replicas. Names, labels, and resource ownership MUST distinguish the two environments.
+Description: The platform MUST define namespaces `shortlink-dev` and `shortlink-prod` in kind, with independent resources. Only one app environment runs at once in the canonical local profiles: inactive app/PostgreSQL replicas are 0 and PVCs remain. Active dev has 1 app replica; active prod has 1 in lite or 2 in standard. The 8 GB profile MUST remain one-node; multi-node is standard-only Should.
 
 Acceptance criteria:
 
 - Given the cluster is provisioned, when the engineer lists namespaces, then `shortlink-dev` and `shortlink-prod` exist.
-- Given prod values are installed, when the engineer lists app pods, then exactly 2 ready app pods exist in `shortlink-prod`.
+- Given lite prod is active, when pods are listed, then exactly 1 ready prod app pod and 1 prod database pod exist; dev app/database replicas are 0.
+- Given standard prod is active, when pods are listed, then exactly 2 ready prod app pods exist; both profiles retain independent dev/prod resource definitions.
 
 ### FR-K8S-02 — Route traffic with Gateway API
 
 Must routing requirement for the DevOps engineer. Linked rules: BR-20 and BR-21.
 
-Description: The platform MUST use one platform-owned GatewayClass and one platform-owned Gateway with Envoy Gateway. The Gateway MUST accept HTTPRoutes from `shortlink-dev` and `shortlink-prod`. Dev and prod MUST use `shortlink-dev.localhost` and `shortlink.localhost`. Host access MUST use the documented Envoy service port-forward to `127.0.0.1:8080` with the correct Host header.
+Description: The platform MUST use one platform-owned GatewayClass and Gateway with Envoy Gateway. Accept HTTPRoutes from `shortlink-dev` and `shortlink-prod`, using hosts `shortlink-dev.localhost` and `shortlink.localhost`. Host access MUST use loopback Envoy port-forward at `127.0.0.1:8081` and the selected Host header. An inactive route MUST NOT reach the active environment.
 
 Acceptance criteria:
 
-- Given Envoy Gateway is installed and port-forward is active, when `curl -H "Host: shortlink.localhost" http://127.0.0.1:8080/healthz` runs, then prod responds with 200.
-- Given dev is deployed and port-forward is active, when `curl -H "Host: shortlink-dev.localhost" http://127.0.0.1:8080/healthz` runs, then dev responds and prod is not reached.
+- Given prod is active and port-forward is active, when `curl -H "Host: shortlink.localhost" http://127.0.0.1:8081/healthz` runs, then prod responds with 200.
+- Given dev is active and port-forward is active, when `curl -H "Host: shortlink-dev.localhost" http://127.0.0.1:8081/healthz` runs, then dev responds and prod is not reached.
 - Given both HTTPRoutes exist, when their parent references are checked, then both attach to the same platform-owned Gateway.
 
 ### FR-K8S-03 — Separate configuration and secrets
@@ -224,18 +239,18 @@ Acceptance criteria:
 
 Priority: Must. Roles: Platform engineer. Linked BRs: BR-19, BR-25.
 
-Description: Each environment MUST have its own PostgreSQL StatefulSet, PVC, and Service. The platform MUST NOT use an operator for Must scope. It MUST NOT use Bitnami images or charts.
+Description: Each environment MUST have its own PostgreSQL StatefulSet, PVC, and Service. Only the selected environment's database has replicas 1; inactive databases have replicas 0 and retained PVCs. Use durable local storage and migration/seed initialization as in document 06. No operator or Bitnami image/chart is allowed for Must scope.
 
 Acceptance criteria:
 
-- Given both environments are installed, when StatefulSets are listed, then `shortlink-dev` and `shortlink-prod` each have one PostgreSQL StatefulSet.
-- Given the dev database is deleted, when prod readiness is checked, then prod remains ready because it uses a separate database.
+- Given both definitions are installed, when StatefulSets are listed, then each namespace has one PostgreSQL StatefulSet/PVC; only the active one runs a pod.
+- Given a fictional dev-only link was stored, when dev stops and prod starts, then prod readiness is 200 and that code is absent from prod's independent database.
 
 ### FR-K8S-06 — Perform zero-downtime rolling updates
 
 Must release-safety requirement for the SRE. Linked rule: BR-26.
 
-Description: The prod Deployment MUST use a rolling update with `maxUnavailable` equal to 0. A release update MUST keep serving requests during k6 load. Rollout status MUST be visible.
+Description: Active prod MUST use `maxUnavailable: 0` and `maxSurge: 1`. Lite starts at 1 replica with budget for a second temporary app pod; standard starts at 2 with budget for a third. Preload old/new/rollback images locally before isolation. A release update MUST keep serving requests during profile-appropriate k6 load; rollout status is captured through kubectl.
 
 Acceptance criteria:
 
@@ -257,18 +272,19 @@ Acceptance criteria:
 
 Must environment-values requirement for the DevOps engineer. Linked rules: BR-18, BR-19, and BR-21.
 
-Description: The chart MUST provide separate dev and prod values files. Dev values MUST set 1 app replica and host `shortlink-dev.localhost`. Prod values MUST set 2 app replicas and host `shortlink.localhost`.
+Description: The chart MUST provide dev/prod values plus lite/standard profile overlays and an `environmentActive` switch. Active dev uses 1 replica and `shortlink-dev.localhost`; active prod uses 1 replica in lite or 2 in standard and `shortlink.localhost`. Inactive app/database replica counts are 0. Local values select loaded immutable tags and `IfNotPresent`/`Never`, not registry-only inputs.
 
 Acceptance criteria:
 
 - Given dev values are rendered, when the engineer checks the output, then host is `shortlink-dev.localhost` and app replicas equal 1.
-- Given prod values are rendered, when the engineer checks the output, then host is `shortlink.localhost` and app replicas equal 2.
+- Given prod values plus lite overlay are rendered, then host is `shortlink.localhost`, replicas are 1, and pull policy allows a loaded image.
+- Given prod values plus standard overlay are rendered, then replicas are 2; an inactive overlay renders 0 app/database replicas with PVC retention.
 
 ### FR-IAC-01 — Provision the local platform with Terraform
 
 Priority: Must. Roles: Platform engineer. Linked BRs: BR-28, BR-29.
 
-Description: Terraform 1.16.x MUST be the default IaC tool. One apply MUST create the kind cluster and install Envoy Gateway and kube-prometheus-stack through the Helm provider. OpenTofu MAY be used only with an ADR.
+Description: Terraform 1.16.x MUST be the default IaC tool. After Compose is stopped, one apply creates local kind and installs Envoy Gateway/kube-prometheus-stack through the Helm provider. Use cached provider binaries, local chart archives/CRDs, and preloaded add-on images for the offline lab; do not require cloud credentials. OpenTofu MAY be used only with an ADR.
 
 Acceptance criteria:
 
@@ -284,29 +300,29 @@ Description: Terraform MUST use local state that is ignored by Git. It MUST incl
 Acceptance criteria:
 
 - Given `profile=unknown`, when Terraform validates variables, then validation fails before apply.
-- Given apply completes, when outputs are shown, then they include cluster name, dev host, prod host, and Grafana local URL.
+- Given apply completes, when outputs are shown, then they include cluster name, dev/prod Host headers, Gateway loopback URL, Prometheus URL, and Alertmanager URL.
 
 ### FR-OBS-01 — Install kube-prometheus-stack
 
 Must monitoring-stack requirement for the SRE. Linked rule: BR-30.
 
-Description: The platform MUST install kube-prometheus-stack with Helm. Prometheus MUST discover ShortLink through ServiceMonitor. Retention MUST be short in the lite profile.
+Description: The platform MUST install kube-prometheus-stack with Helm. Prometheus MUST discover the active ShortLink environment through ServiceMonitor; inactive environments are excluded from target-down/RED rules. Lite retention is 6 hours. Grafana is disabled by default and in lite; standard MAY use unmodified built-in consoles for operations only.
 
 Acceptance criteria:
 
 - Given ShortLink is deployed, when Prometheus targets are viewed, then the ShortLink target is up.
 - Given the lite profile is selected, when Prometheus values are reviewed, then retention is 6 hours.
 
-### FR-OBS-02 — Show RED and resource dashboards
+### FR-OBS-02 — Query RED and resource evidence
 
 Priority: Must. Roles: SRE, Engineering manager. Linked BRs: BR-07, BR-31.
 
-Description: Grafana MUST show RED metrics: rate, errors, and duration p50, p95, and p99. It MUST also show CPU, memory, and pod restarts for dev and prod.
+Description: Students MUST query Prometheus's HTTP API using curl, a Python client, or CLI commands and save JSON/text evidence for request rate, 5xx rate, p50/p95/p99 latency, CPU, memory, and restarts. Evidence records query, timestamp, environment, result values/units, and interpretation. No custom Grafana dashboard/panel/visualization is authored or exported; built-in Grafana is optional operations tooling only.
 
 Acceptance criteria:
 
-- Given traffic was generated for 5 minutes, when the dashboard is opened, then panels show request rate, 5xx rate, p50, p95, and p99 latency.
-- Given a pod restarts once, when the dashboard refreshes, then the restart panel shows at least 1 restart for that pod.
+- Given a fixture generates 100 valid redirects and 10 missing-code requests without following redirects, when before/after metrics are compared, then request delta is 110, redirect delta is 100, and 5xx delta is 0; saved Prometheus responses have `status: success`.
+- Given a pod restarts once, when the restart series is queried, then the saved result for that pod is at least 1. Document 08 defines the required PromQL evidence.
 
 ### FR-OBS-03 — Define mandatory alert rules
 
@@ -340,7 +356,7 @@ Description: The student MUST write one runbook for each mandatory alert. Each r
 
 Acceptance criteria:
 
-- Given `ShortLinkHighLatencyP95` fires, when the SRE opens its runbook, then it lists dashboard panels, commands to inspect pods, rollback conditions, and escalation owner.
+- Given `ShortLinkHighLatencyP95` fires, when the SRE opens its runbook, then it lists Prometheus API queries, pod/log commands, rollback conditions, and escalation owner.
 - Given a mandatory alert lacks a runbook link, when the alert catalog is reviewed, then the requirement is not complete.
 
 ### FR-REL-02 — Run reliability drills with evidence
@@ -393,23 +409,23 @@ Acceptance criteria:
 |---|---|---|
 | FR-APP-05 | Add custom alias, expiry, stats endpoint, API-key delete, and Valkey cache-aside TTL after Must scope. | Valid alias `team-demo` creates a link; duplicate alias returns 409; cache ADR names Valkey or Redis licence reason. |
 | FR-GITOPS-01 | Add Argo CD 3.5.x watching `deploy/` in the student repository. Dev syncs automatically. Prod syncs only after promotion PR approval. | Dev change becomes Synced automatically; prod remains OutOfSync until manual sync. |
-| FR-LOG-01 | Add Loki 3.7.x and Grafana Alloy 1.20.x in the standard profile. Promtail MUST NOT be used. | A request ID can be searched in Grafana Explore within 5 minutes. |
-| FR-SCALE-01 | Add metrics-server and HPA with CPU target 70% and replicas 2 to 6. | k6 load makes replicas increase above 2 and later return to 2. |
+| FR-LOG-01 | Add Loki 3.7.x and Grafana Alloy 1.20.x in a separately budgeted standard profile. Promtail MUST NOT be used. | Loki HTTP API/CLI finds a recorded request ID within 5 minutes; an unmodified built-in console may be inspected, not implemented. |
+| FR-SCALE-01 | Standard-only: metrics-server and HPA at CPU target 70%, replicas 2 to 6, after a separate memory pre-check including surge. | k6 load increases replicas above 2 and returns to 2; lite remains fixed at 1 and never runs this drill. |
 | FR-NET-01 | Add Calico 3.33.x or Cilium through ADR and enforce database isolation. | App connects to PostgreSQL; debug pod without label is denied. |
 | FR-K8S-07 | Add a prod PodDisruptionBudget with `minAvailable: 1`. | On 1 node, drain is blocked as expected; on a multi-node cluster, drain completes with 0 failed requests. |
 | FR-KIND-01 | Add a standard multi-node kind profile with 1 control plane and 2 workers. | Nodes list shows 3 Ready nodes and prod pods spread across workers when possible. |
-| FR-TEST-01 | Add bats-core tests, SBOM, CI deploy test, release workflow, yamllint, and TFLint. | Each script has at least 3 bats tests; tag `vX.Y.Z` starts release workflow. |
+| FR-TEST-01 | Add bats-core tests, SBOM, extended kind fault/deploy matrix beyond mandatory local acceptance, release workflow, yamllint, and TFLint. | Each script has at least 3 bats tests; tag `vX.Y.Z` starts release workflow. |
 | FR-SECRETS-01 | Add SOPS with age or Sealed Secrets for encrypted secrets. | Plain database password is absent from Git, and the cluster can decrypt or consume the secret. |
-| FR-SLO-01 | Add SLO dashboard and burn-rate alerts. | Dashboard shows 99.5% availability and p95 under 300 ms; short-window burn alert can be demonstrated. |
+| FR-SLO-01 | Add SLO PromQL/recording rules and burn-rate alerts with saved API evidence. | Saved query results identify 99.5% availability/p95 under 300 ms design targets; rule tests demonstrate short-window burn without claiming 30 days of local measurement. |
 | FR-POST-01 | Write a blameless postmortem and basic DORA notes for a simulated bad release. | Postmortem includes timeline, impact, root cause, actions, and deployment frequency notes. |
 | FR-HELM-03 | Add helm-unittest for important chart branches. | Tests cover dev host, prod replicas, and security context values. |
 | FR-IAC-03 | Add `terraform test` and TFLint for the platform. | Invalid profile test fails; lint has 0 errors. |
 | FR-JENKINS-01 | Write and explain a Jenkinsfile equivalent pipeline using Jenkins LTS in Docker. | The student can map each GitHub Actions gate to a Jenkins stage. |
 | FR-ANSIBLE-01 | Prepare a fresh Ubuntu VM with Docker and kind through Ansible. | A Multipass Ubuntu VM can reach `kind version` after the playbook. |
 | FR-ROLLOUT-01 | Try Argo Rollouts canary delivery. | A canary receives 10% traffic before promotion. |
-| FR-SIGN-01 | Sign images with cosign and enforce a Kyverno policy. | Unsigned image is rejected in a test namespace. |
+| FR-SIGN-01 | Sign local images with cosign using an ignored local key and enforce Kyverno policy; prepare all images before isolation. No cloud signing account is required. | Unsigned local image is rejected in a test namespace; signed fixture passes. |
 | FR-OTEL-01 | Add OpenTelemetry tracing. | One create-link request has a trace from API handler to database call. |
-| FR-AWS-01 | Demo k3s on one AWS free-tier EC2 instance with cost warning. | Demo document shows budget warning, destroy step, and no long-running resources. |
+| FR-LOCAL-02 | Validate the offline artifact inventory and rollback image set with local checksums. | A changed chart/image artifact yields `artifact-digest-mismatch`; cached old/new/rollback images and charts can be verified without contacting a registry. |
 | FR-DBOP-01 | Evaluate CloudNativePG as a Could database operator. | ADR compares StatefulSet Must design with operator trade-offs. |
 
 ## Business rules
@@ -427,51 +443,52 @@ Acceptance criteria:
 | BR-09 | Secrets MUST come from runtime configuration only. | Required env: `DATABASE_URL`, `APP_ENV`; optional `API_KEY`, `BASE_URL`. | FR-APP-04, FR-K8S-03 |
 | BR-10 | The app image MUST be small and unprivileged. | Final image below 200 MB; non-root user; no secrets in layers. | FR-CON-01, FR-SEC-01 |
 | BR-11 | The image MUST expose a health check. | Health path `/healthz`; expected 200. | FR-CON-01 |
-| BR-12 | Compose MUST include app and PostgreSQL health checks. | Services: `app`, `postgres`; PostgreSQL image line 18.x. | FR-CON-02 |
+| BR-12 | Compose is the first runnable local stage. | Services `app`, `postgres`; PostgreSQL 18.x; loopback app 8080; persistent named volume; local build, migrations/seed, health and proposed caps. | FR-CON-02 |
 | BR-13 | Required scripts MUST use safe Bash. | `set -euo pipefail`, help flag, ShellCheck 0 findings. | FR-BASH-01 |
-| BR-14 | Backups MUST rotate locally. | File timestamp format `YYYYMMDD-HHMMSS`; retention 7 days; backup and restore stream through `kubectl exec` in the selected PostgreSQL pod. | FR-BASH-01 |
-| BR-15 | PR gates MUST include all mandatory checks. | Ruff, mypy, hadolint, ShellCheck, pytest coverage, image build, Trivy, Gitleaks, Helm lint, kubeconform with required CRD schemas, Terraform fmt and validate on pull requests and pushes to `main`. | FR-CI-01, FR-CI-03 |
-| BR-16 | Main images MUST be traceable. | Tags: SemVer from the declared app version and short SHA such as `abc1234`; SemVer tag reuse for a different digest is rejected; prod pins short SHA or digest. | FR-CI-02 |
+| BR-14 | Backups MUST rotate locally. | Timestamp `YYYYMMDD-HHMMSS`; retention 7 days; stream through `docker compose exec` in stage 1 or `kubectl exec` in selected PostgreSQL pod in stage 2; ignored local backup directory. | FR-BASH-01 |
+| BR-15 | PR gates MUST include all mandatory checks. | Ruff, mypy, hadolint, ShellCheck, pytest coverage, image build, Trivy, Gitleaks, Helm lint, kubeconform/CRD schemas, Terraform fmt/validate, and TC-LOCAL-001 to TC-LOCAL-004 for both stages. | FR-CI-01, FR-CI-03 |
+| BR-16 | CI registry images and local images MUST be traceable but independent. | GHCR SemVer/short SHA same digest; reject tag reuse; registry delivery pins SHA/digest. Offline local image is `shortlink:local-<short-sha>`, loaded into kind with `IfNotPresent` or `Never`. | FR-CI-02, FR-LOCAL-01 |
 | BR-17 | Branch protection MUST block unsafe merges. | Required checks; no direct push to `main`; PR review before merge. | FR-CI-03 |
-| BR-18 | Kubernetes environments MUST use exact namespaces. | `shortlink-dev`, `shortlink-prod`. | FR-K8S-01, FR-HELM-02 |
-| BR-19 | Each environment MUST have independent database resources. | One PostgreSQL StatefulSet, PVC, and Service per environment. | FR-K8S-01, FR-K8S-05, FR-HELM-02 |
+| BR-18 | Kubernetes environments MUST use exact namespaces/profile counts. | `shortlink-dev`, `shortlink-prod`; one active environment; active dev 1 app, prod lite 1/standard 2; inactive app/database 0. Lite is one-node only. | FR-K8S-01, FR-HELM-02 |
+| BR-19 | Each environment MUST have independent persistent database resources. | One StatefulSet/PVC/Service/Secret per environment; only active database runs (1 pod); inactive PVC retained. | FR-K8S-01, FR-K8S-05, FR-HELM-02 |
 | BR-20 | Gateway API MUST use a maintained implementation. | Envoy Gateway 1.9.x; one platform-owned GatewayClass and Gateway; ingress-nginx is not allowed. | FR-K8S-02 |
-| BR-21 | Host names MUST not collide. | Dev `shortlink-dev.localhost`; prod `shortlink.localhost`; local access uses Envoy port-forward at `127.0.0.1:8080` with Host header. | FR-K8S-02, FR-HELM-02 |
+| BR-21 | Host names and stage ports MUST not collide. | Compose `127.0.0.1:8080`; kind Envoy `127.0.0.1:8081` with Host dev `shortlink-dev.localhost` or prod `shortlink.localhost`; no external DNS needed. | FR-K8S-02, FR-HELM-02 |
 | BR-22 | Kubernetes Secrets MUST be created from an ignored local file. | The source file is never committed; `scripts/create-secrets.sh --env dev|prod --file <path>` creates the Kubernetes Secret. | FR-K8S-03 |
 | BR-23 | Pods MUST be hardened. | `runAsNonRoot`, `readOnlyRootFilesystem`, drop `ALL` capabilities. | FR-K8S-04 |
 | BR-24 | Probes MUST use app endpoints. | Liveness `/healthz`; readiness `/readyz`; startup `/healthz`. | FR-K8S-04 |
 | BR-25 | Must PostgreSQL MUST avoid operators and Bitnami. | StatefulSet only; no operator; no Bitnami images or charts. | FR-K8S-05 |
-| BR-26 | Prod rolling updates MUST preserve availability. | Prod replicas 2; `maxUnavailable: 0`; 0 failed requests under load. | FR-K8S-06, FR-REL-02 |
+| BR-26 | Active prod rolling updates MUST preserve availability. | Lite 1/standard 2 replicas; `maxUnavailable: 0`, `maxSurge: 1`; budget the extra pod; preload rollback images; 0 failed requests under profile-appropriate load. | FR-K8S-06, FR-REL-02 |
 | BR-27 | Helm chart MUST be owned by the student. | Chart name `shortlink`; has dev/prod values and `helm test` hook. | FR-HELM-01 |
 | BR-28 | Terraform is the default IaC tool. | Terraform 1.16.x; OpenTofu only with ADR. | FR-IAC-01 |
 | BR-29 | Terraform scope MUST stay small. | One apply creates kind and installs Envoy Gateway and kube-prometheus-stack; local state ignored; one module. | FR-IAC-01, FR-IAC-02 |
-| BR-30 | Monitoring stack MUST use kube-prometheus-stack. | Helm chart line 91.x; lite retention 6 hours. | FR-OBS-01 |
-| BR-31 | Dashboard MUST show RED and resources. | Rate, errors, p50, p95, p99, CPU, memory, restarts. | FR-OBS-02 |
+| BR-30 | Monitoring stack MUST use kube-prometheus-stack. | Helm 91.x; lite retention 6 hours; discover active environment only; Grafana off in lite/default, unmodified optional standard operations tool. | FR-OBS-01 |
+| BR-31 | Saved Prometheus API/CLI evidence MUST show RED and resources. | Rate, 5xx errors, p50/p95/p99, CPU, memory, restarts; include query/time/environment/values/units; no custom dashboard/panel exports. | FR-OBS-02 |
 | BR-32 | Mandatory alerts MUST use exact thresholds. | 5xx greater than 5% for 5 minutes; p95 greater than 500 ms for 10 minutes; at least 3 container restarts within 10 minutes sustained for 5 minutes; target down. | FR-OBS-03 |
 | BR-33 | Alert e-mail MUST use Mailpit. | Mailpit 1.31.x e-mail receiver is Must; SMTP smarthost `mailpit.monitoring:1025`; sender `alertmanager@example.in`; receiver `sre@example.in`; TLS not required; webhook receiver is Should. | FR-OBS-04 |
 | BR-34 | Runbooks MUST match mandatory alerts. | One runbook each for high error rate, high latency, crash loop, and target down. | FR-REL-01 |
 | BR-35 | Reliability evidence MUST be documented. | Rolling update, rollback, and pod kill drills. | FR-REL-02 |
 | BR-36 | Security scans MUST fail on severe findings. | Trivy 0 CRITICAL; HIGH with fix fails; unexplained HIGH config findings not allowed. | FR-SEC-01 |
 | BR-37 | Dependabot MUST cover three ecosystems. | GitHub Actions, pip, Docker. | FR-SEC-02 |
-| BR-38 | Cloud mapping MUST cover core local services. | kind to EKS; GHCR to ECR; PVC to EBS; Gateway to load balancer; Mailpit to SNS or SES; local state to S3 remote state. | FR-DOC-01 |
+| BR-38 | Interview theory MUST cover core local/cloud concepts without deployment. | kind to EKS; GHCR to ECR; PVC to EBS; Gateway to load balancer; Mailpit to SNS or SES; local state to S3 remote state; no cloud account/resource required. | FR-DOC-01 |
 | BR-39 | Optional app features MUST not break Must API behavior. | Alias 3-32 chars; expiry timestamp; stats endpoint; delete with `X-API-Key`; cache TTL 60 seconds. | FR-APP-05 |
 | BR-40 | GitOps promotion MUST protect prod. | Argo CD watches `deploy/`; dev auto-sync; prod manual sync after promotion PR. | FR-GITOPS-01 |
 | BR-41 | Logging stack MUST avoid deprecated Promtail. | Loki 3.7.x and Alloy 1.20.x. | FR-LOG-01 |
-| BR-42 | HPA bounds MUST be exact. | CPU target 70%; replicas 2 to 6. | FR-SCALE-01 |
+| BR-42 | HPA bounds MUST be exact and standard-only. | CPU 70%; replicas 2 to 6; separate resource pre-check including surge; lite stays fixed at 1. | FR-SCALE-01 |
 | BR-43 | NetworkPolicy MUST be enforced by a real CNI. | Calico 3.33.x or Cilium by ADR; negative connectivity test required. | FR-NET-01 |
-| BR-44 | Multi-node profile MUST be clear. | 1 control plane and 2 workers. | FR-KIND-01 |
-| BR-45 | Optional quality tools MUST have evidence. | bats 3 tests per script; SBOM; ephemeral kind deploy test; yamllint; TFLint; helm-unittest; Terraform test. | FR-TEST-01, FR-HELM-03, FR-IAC-03 |
+| BR-44 | Multi-node profile MUST be standard-only and separately budgeted. | 1 control plane and 2 workers; never on the 8 GB lite host. | FR-KIND-01 |
+| BR-45 | Optional quality tools MUST have evidence beyond base acceptance. | bats 3 tests/script; SBOM; extended ephemeral kind fault/deploy matrix; yamllint; TFLint; helm-unittest; Terraform test. | FR-TEST-01, FR-HELM-03, FR-IAC-03 |
 | BR-46 | Encrypted secrets MUST be explainable. | SOPS with age or Sealed Secrets. | FR-SECRETS-01 |
-| BR-47 | SLO targets MUST be explicit. | Availability 99.5% over 30 days; p95 latency below 300 ms. | FR-SLO-01 |
+| BR-47 | SLO design targets MUST be explicit in query/rule evidence. | Availability 99.5% over 30 days; p95 below 300 ms; local rule fixtures do not claim 30-day measured availability. | FR-SLO-01 |
 | BR-48 | Incident practice MUST be blameless. | Bad release, alert, rollback, timeline, action items, DORA notes. | FR-POST-01 |
 | BR-49 | Jenkins explanation MUST mirror CI. | Jenkins LTS 2.568.x in Docker; same gates as GitHub Actions. | FR-JENKINS-01 |
 | BR-50 | VM automation MUST stay optional. | Multipass Ubuntu VM with Docker and kind. | FR-ANSIBLE-01 |
 | BR-51 | Canary delivery MUST be bounded. | 10% canary before promotion. | FR-ROLLOUT-01 |
 | BR-52 | Image signing MUST block unsigned images. | cosign signature and Kyverno policy. | FR-SIGN-01 |
 | BR-53 | Tracing MUST connect API and database span. | OpenTelemetry trace for create-link request. | FR-OTEL-01 |
-| BR-54 | AWS demo MUST prevent surprise cost. | Budget warning and destroy step required. | FR-AWS-01 |
+| BR-54 | Optional offline artifact verification MUST detect drift. | Local digest inventory includes chart archives and old/new/rollback images; changed content yields `artifact-digest-mismatch`; no registry lookup during verification. | FR-LOCAL-02 |
 | BR-55 | Database operator evaluation MUST stay Could. | CloudNativePG ADR only unless all Must scope is complete. | FR-DBOP-01 |
 | BR-56 | Prod disruption budget SHOULD protect voluntary disruption. | PodDisruptionBudget `minAvailable: 1`; 1-node drain blocked; multi-node drain with 0 failed requests. | FR-K8S-07 |
+| BR-57 | Local operation MUST be independent, persistent, and explicit. | Document 06 entrypoints; Compose before kind; cached artifacts/local loaded image; one active environment; reset requires `CONFIRM=DELETE_LOCAL_DATA`; offline tests after initial downloads. | FR-LOCAL-01 |
 
 ## State machines
 
@@ -501,7 +518,9 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   [*] --> Proposed
-  Proposed --> Tested: "PR checks pass"
+  Proposed --> Tested: "Local or PR checks pass"
+  Tested --> LoadedLocal: "Local build and kind load"
+  LoadedLocal --> DeployedDev: "Offline local Helm release"
   Tested --> Published: "main workflow pushes image"
   Published --> DeployedDev: "dev release installed"
   DeployedDev --> DeployedProd: "promotion approved"
@@ -513,6 +532,8 @@ stateDiagram-v2
 |---|---|---|---|---|
 | Proposed | PR checks pass | All BR-15 gates green | Tested | CI |
 | Tested | Merge to `main` | Branch protection satisfied | Published | GitHub Actions |
+| Tested | Local build and kind load | Cached artifacts; no registry dependency | LoadedLocal | Local operator |
+| LoadedLocal | Deploy dev locally | Loaded immutable tag and permitted pull policy | DeployedDev | Local operator |
 | Published | Deploy dev | Image tag exists | DeployedDev | DevOps engineer |
 | DeployedDev | Promote prod | Smoke test passes | DeployedProd | DevOps engineer |
 | DeployedProd | Rollback | Alert or smoke failure | RolledBack | SRE |
@@ -544,7 +565,8 @@ stateDiagram-v2
 | PostgreSQL is unavailable | `/readyz` fails and pod leaves Service endpoints. | 503 `not_ready` |
 | Secret source file missing | Secret creation script exits before kubectl apply. | `secret-file-missing` |
 | Trivy finds CRITICAL | CI fails before image publish. | Failed check `trivy-image` |
-| `.localhost` does not resolve | Documentation instructs hosts-file fallback to `127.0.0.1`. | Fallback note in setup output |
-| Mailpit is down | Alert remains visible in Alertmanager. | Delivery failure in Alertmanager UI |
+| `.localhost` does not resolve | Use loopback URL and explicit Host header, not external DNS. | Documented curl/API-client command |
+| Mailpit is down | Alert remains queryable in Alertmanager API. | Delivery failure in metrics/log evidence |
+| Cached local artifact missing | Stop local startup before pulls/apply and exit 2. | `local-artifact-missing: <path>` |
 
 [Back to README](../README.md)

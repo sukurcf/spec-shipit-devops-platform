@@ -10,17 +10,17 @@ ShipIt turns this manual process into a local cloud-native delivery platform. Th
 
 ## Vision
 
-ShipIt MUST let a fresher show the complete DevOps lifecycle for one microservice. A reviewer MUST see a secure container image, a green CI pipeline, two Kubernetes environments, dashboards, alerts, backup and restore scripts, and documented reliability drills.
+ShipIt MUST let a fresher show the complete DevOps lifecycle for one backend microservice. A reviewer MUST see a local Compose API, a secure image, a green CI pipeline, dev/prod Kubernetes definitions exercised sequentially, Prometheus API/CLI evidence, alerts, backup/restore, and reliability drills. No frontend is implemented.
 
 ## Measurable goals
 
 | Goal | Target |
 |---|---|
 | Safe releases | A rolling update under k6 load has 0 failed requests. |
-| Fast redirects | With 50 virtual users and 2 prod replicas, p95 redirect latency is below 300 ms. |
+| Fast redirects | Standard: 50 virtual users and 2 prod replicas, p95 below 300 ms. Lite: same script with 20 virtual users and 1 prod replica; save measured results. |
 | Secure image | The final image is below 200 MB and has 0 CRITICAL Trivy findings. |
 | Quality gates | Every pull request runs lint, tests, coverage, image scan, secret scan, Helm checks, Kubernetes schema checks, and Terraform validation. |
-| Local reproducibility | A clean clone starts the lite profile on an 8 GB laptop. |
+| Local reproducibility | Target an 8 GB/four-core lite host: Compose first, then one-node kind; one active app environment. Trainer verifies proposed budgets and offline acceptance, not an assumed measured result. |
 | Alert response | Each mandatory alert has a runbook and a recorded drill or demo step. |
 
 ## Scope by priority
@@ -37,6 +37,7 @@ ShipIt MUST let a fresher show the complete DevOps lifecycle for one microservic
 - Monitoring, Mailpit alert e-mail, runbooks, and reliability drills.
 - Security scans, dependency hygiene, and no secrets in Git.
 - Local-to-AWS mapping for interview readiness.
+- FR-LOCAL-01 start/stop, migrations/fictional seed, deterministic offline demo, persisted data, and clear unavailable-dependency failures in document 06.
 
 ### Should: recommended hardening
 
@@ -44,7 +45,7 @@ ShipIt MUST let a fresher show the complete DevOps lifecycle for one microservic
 - Loki and Grafana Alloy logs.
 - HPA, PodDisruptionBudget, multi-node kind, and NetworkPolicy enforcement.
 - Deeper tests, SBOM, release workflow, TFLint, yamllint, helm-unittest, and Terraform tests.
-- SOPS or Sealed Secrets, SLO dashboard, postmortem, DORA metrics, and Jenkins explanation.
+- SOPS or Sealed Secrets, SLO queries/burn-alert evidence, postmortem, DORA metrics, and Jenkins explanation.
 
 ### Could: stretch items
 
@@ -52,18 +53,19 @@ ShipIt MUST let a fresher show the complete DevOps lifecycle for one microservic
 - Argo Rollouts canary delivery.
 - cosign signing and Kyverno policy.
 - OpenTelemetry tracing.
-- A short AWS free-tier k3s demo with a budget warning and destroy step.
+- Offline local artifact checksum/rollback validation.
 - CloudNativePG evaluation.
 
 ## Non-goals and out of scope
 
-- ShipIt MUST NOT use managed Kubernetes for Must scope.
+- ShipIt MUST NOT include cloud/public deployment exercises or require managed Kubernetes, even in stretch work.
 - ShipIt MUST NOT require a cloud account.
 - ShipIt MUST NOT use Bitnami images or charts.
 - ShipIt MUST NOT use ingress-nginx.
 - ShipIt MUST NOT implement a service mesh or multi-cluster design.
 - ShipIt MUST NOT store real personal data or real production URLs in examples.
 - ShipIt MUST NOT include implementation code in this specification repository.
+- ShipIt MUST NOT author a frontend, custom Grafana dashboard, panel, visualization, or Geomap. Built-in consoles MAY be inspected for operations only; REST/CLI/SQL evidence is sufficient.
 
 ## Assumptions
 
@@ -82,37 +84,38 @@ ShipIt MUST let a fresher show the complete DevOps lifecycle for one microservic
 | Duration | 6 weeks, about 180 hours. |
 | Must effort budget | At most about 120 hours, including about 30 hours of guided learning and setup. |
 | Remaining time | About 60 hours for Should items, interview work, and contingency. |
-| Minimum hardware | 8 GB RAM with the lite profile. |
-| Recommended hardware | 16 GB RAM with the standard profile. |
+| Minimum hardware | 8 GB RAM, 4 cores, 20 GB free disk with lite. |
+| Recommended hardware | 16 GB RAM, 4 or more cores, 30 GB free disk with standard. |
 | Kubernetes target | kind 0.33.x with Kubernetes 1.37.x. |
 | IaC target | Terraform 1.16.x by default. OpenTofu needs an ADR. |
 | Gateway implementation | Envoy Gateway 1.9.x. |
 | Helm target | Helm 4.x. |
 | Alert receiver | Mailpit e-mail is Must. A webhook receiver is Should. |
 
-The spec uses `.localhost` host names for routes. Local smoke tests use Envoy port-forward to `127.0.0.1:8080` and send the expected Host header. Browser demos MAY add hosts-file entries to `127.0.0.1`.
+The spec uses `.localhost` Host headers for kind routes at `127.0.0.1:8081`; Compose uses `127.0.0.1:8080`. No DNS or hosts-file edit is required for curl/API-client checks. Do not follow redirects to fictional `example.in` URLs. Initial downloads and GitHub/GHCR exercises need internet; local startup/verification after preparation do not.
 
 ## Lite and standard profiles
 
 | Profile | Hardware | Enabled services | Limits |
 |---|---|---|---|
-| Lite | 8 GB RAM | 1-node kind, ShortLink dev and prod, two PostgreSQL StatefulSets, Envoy Gateway, kube-prometheus-stack with short retention, Mailpit | Prometheus retention 6 hours; no Loki; no Argo CD; app memory limit 256 MiB; PostgreSQL memory limit 512 MiB per environment. |
-| Standard | 16 GB RAM | Lite services plus optional multi-node kind, Argo CD, Loki, Alloy, metrics-server, and Calico | Prometheus retention 24 hours; app memory limit 512 MiB; PostgreSQL memory limit 1 GiB per environment. |
+| Lite | 8 GB RAM | Stage 1 Compose, then 1-node kind with one active app/database environment, Envoy, Prometheus/Alertmanager, Mailpit | Dev/prod each 1 app replica when active; inactive workloads 0; surge 1; retention 6 hours; no Grafana/Loki/Argo CD; app cap 256 MiB, active PostgreSQL cap 512 MiB. |
+| Standard | 16 GB RAM | Same sequential stages; optional multi-node kind/add-ons only after separate resource pre-check | Dev 1/prod 2 active replicas; surge 1; retention 24 hours; app cap 512 MiB/pod, active PostgreSQL cap 1 GiB. Optional built-in Grafana is operations-only. |
 
 `bootstrap.sh` MUST detect host RAM. If RAM is below 16 GB, it MUST recommend the lite profile before cluster creation.
 
 ## Success criteria
 
 - A reviewer can create a short link at `POST /api/v1/links`.
-- A reviewer can open `http://shortlink.localhost:8080/{code}` and receive the exact redirect status from the platform specification.
-- Dev and prod host names do not collide: `shortlink-dev.localhost:8080` and `shortlink.localhost:8080` for browser demos.
-- Each environment has its own PostgreSQL StatefulSet.
+- A reviewer can call the Compose API at `127.0.0.1:8080` or kind Gateway at `127.0.0.1:8081` with the selected Host header and receive HTTP 302 without following the external Location.
+- Dev/prod hosts are `shortlink-dev.localhost` and `shortlink.localhost`; both definitions exist, but only the selected environment's app/database runs in the local profile.
+- Each environment has its own PostgreSQL StatefulSet/PVC/Secret; inactive workloads scale to 0 and retain data.
 - The pull request checks block a broken change.
 - The `main` branch publishes a GHCR image tagged with SemVer and short SHA.
-- Grafana shows RED metrics and resource usage.
+- Prometheus API/CLI queries and saved JSON prove RED metrics, CPU, memory, restarts, and alert state.
 - Alertmanager sends at-least-once alert e-mail to Mailpit.
 - A backup can be restored into the local PostgreSQL database.
 - The final demo includes rolling update, rollback, and pod-kill evidence.
+- TC-LOCAL-001 through TC-LOCAL-004 verify both stages after initial downloads, deterministic fixture/seed operations, persisted stop/start, and input/dependency errors.
 
 ## Skills learned and job relevance
 
@@ -124,10 +127,10 @@ The spec uses `.localhost` host names for routes. Local smoke tests use Envoy po
 | Kubernetes operations | Deployments, Services, StatefulSets, probes, resources, Gateway API |
 | Helm packaging | Charts, values, release history, rollback, test hooks |
 | Terraform | State, providers, modules, variables, outputs, drift |
-| Observability | Prometheus, Grafana, RED metrics, Alertmanager, runbooks |
+| Observability | Prometheus HTTP API, PromQL, RED metrics, Alertmanager, CLI/JSON evidence, runbooks |
 | Security | Trivy, Gitleaks, Dependabot, secrets management, least privilege |
 | Reliability | Zero-downtime deploys, rollback, self-healing, backup and restore |
-| Cloud literacy | EKS, ECR, EBS, load balancers, SNS, SES, S3 remote state |
+| Cloud literacy (theory only) | EKS, ECR, EBS, load balancers, SNS, SES, S3 remote state; no account or deployment |
 
 ## Related documents
 

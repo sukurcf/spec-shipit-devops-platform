@@ -41,11 +41,12 @@ Purpose: This document defines ShipIt terms and links official documentation for
 | Terraform state | File that records resources managed by Terraform. It is local and ignored in Must scope. |
 | Terraform module | Reusable Terraform unit with inputs and outputs. |
 | kube-prometheus-stack | Helm chart that installs Prometheus, Alertmanager, Grafana, and related components. |
-| Grafana dashboard | Visual page that shows metrics such as rate, errors, latency, CPU, and memory. |
+| Prometheus HTTP API evidence | Saved query/result JSON with metric values, labels, units, environment, and timestamps; replaces custom visualization deliverables. |
+| Built-in Grafana | Unmodified optional standard operations console; disabled by default/in lite. Students never author dashboards, panels, visualizations, or Geomap. |
 | Alertmanager | Prometheus component that routes firing alerts to receivers such as Mailpit. |
 | Mailpit | Local e-mail testing tool used to receive alert e-mail. |
 | Runbook | Step-by-step incident guide with symptoms, diagnosis, mitigation, and escalation. |
-| Rolling update | Deployment strategy that replaces pods gradually. Prod uses `maxUnavailable: 0`. |
+| Rolling update | Replace pods gradually: prod lite 1/standard 2 steady replicas, `maxUnavailable: 0`, `maxSurge: 1`, with an extra pod's memory reserve. |
 | Rollback | Returning a Helm release to a previous known-good revision. |
 | k6 | Load-test tool used to prove latency and zero failed requests. |
 | Trivy | Scanner for image vulnerabilities and Kubernetes misconfigurations. |
@@ -61,6 +62,9 @@ Purpose: This document defines ShipIt terms and links official documentation for
 | Argo CD | GitOps controller that syncs cluster state from Git. |
 | Loki | Grafana log store used in the standard profile. |
 | Alloy | Grafana collector for logs and telemetry. It replaces Promtail. |
+| Local image delivery | Build an immutable local SHA tag and load it into kind; `IfNotPresent`/`Never` permits offline use without GHCR. |
+| Active environment | One selected app/database namespace; inactive workloads have 0 replicas and retained PVCs. |
+| Local operation contract | Document 06 start/stop/demo/reset, caches/seed/migrations, loopback ports, persistence, clear failures, and offline acceptance after downloads. |
 
 ## Official documentation links
 
@@ -96,7 +100,7 @@ Purpose: This document defines ShipIt terms and links official documentation for
 | Envoy Gateway | https://gateway.envoyproxy.io/ |
 | Prometheus | https://prometheus.io/docs/ |
 | kube-prometheus-stack | https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack |
-| Grafana | https://grafana.com/docs/grafana/latest/ |
+| Grafana (unmodified optional operations tooling only) | https://grafana.com/docs/grafana/latest/ |
 | Alertmanager | https://prometheus.io/docs/alerting/latest/alertmanager/ |
 | Mailpit | https://mailpit.axllent.org/ |
 | Trivy | https://trivy.dev/docs/latest/ |
@@ -130,21 +134,20 @@ Purpose: This document defines ShipIt terms and links official documentation for
 | Helm getting started | https://helm.sh/docs/intro/quickstart/ |
 | Terraform tutorials | https://developer.hashicorp.com/terraform/tutorials |
 | Prometheus getting started | https://prometheus.io/docs/prometheus/latest/getting_started/ |
-| Grafana fundamentals | https://grafana.com/tutorials/ |
 | GitHub Actions tutorial | https://docs.github.com/actions/tutorials |
-| AWS fundamentals | https://docs.aws.amazon.com/whitepapers/latest/aws-overview/introduction.html |
+| AWS fundamentals (interview theory only, no account/deployment) | https://docs.aws.amazon.com/whitepapers/latest/aws-overview/introduction.html |
 
 ## Suggested reading order
 
 1. Read the ShipIt overview, users, FRs, NFRs, and platform specification.
 2. Learn Linux commands before Docker debugging.
-3. Learn Docker images, containers, volumes, and networks before Kubernetes.
+3. Learn Docker images/volumes/networks and run the Compose API stage before Kubernetes; prepare caches before offline acceptance.
 4. Learn Kubernetes Pods, Deployments, Services, StatefulSets, probes, and namespaces.
 5. Learn Gateway API and Envoy Gateway routing for `.localhost` hosts.
 6. Learn Helm chart, values, release, and rollback concepts.
 7. Learn Terraform state, plan, apply, variables, modules, providers, and drift.
-8. Learn Prometheus metrics, Grafana dashboards, Alertmanager, RED, USE, SLI, SLO, and SLA.
+8. Learn Prometheus HTTP API/PromQL, saved metric/alert evidence, Alertmanager, RED/USE, SLI/SLO/SLA; no custom dashboard/panel authoring.
 9. Learn Trivy, Gitleaks, Dependabot, branch protection, and secure image practices.
-10. Learn AWS basics after local ShipIt works, then map local components to AWS services.
+10. Learn AWS interview concepts after local ShipIt works, then map local components without a cloud account or public deployment exercise.
 
 [Back to README](../README.md)

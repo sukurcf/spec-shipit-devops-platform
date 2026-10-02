@@ -37,13 +37,15 @@ ShipIt uses GitHub Flow. `main` is always releasable. Every change starts from a
 - No secret appears in commits, image layers, logs, screenshots, or runbooks.
 - The PR description names significant AI help when used.
 - The student can explain the change without reading generated text.
+- TC-LOCAL-001 through TC-LOCAL-004 pass for Compose and one-node kind after prepared downloads, with external egress denied and saved seed/persistence/failure evidence.
+- Changed image/chart values still permit loaded local tags and enforce one active environment, correct profile replicas, surge reserve, and loopback bindings.
 
 ## Branch protection
 
 | Setting | Required value |
 |---|---|
 | Required PR | Enabled before merge to `main`. |
-| Required checks | Ruff, mypy, pytest coverage, hadolint, ShellCheck, image build, Trivy, Gitleaks, Helm lint, kubeconform, Terraform format check, Terraform validate. |
+| Required checks | Ruff, mypy, pytest coverage, hadolint, ShellCheck, image build, Trivy, Gitleaks, Helm lint, kubeconform, Terraform format/validate, local acceptance (Compose and one-node kind). |
 | Stale approvals | Dismiss approval after a new commit. |
 | Direct push | Blocked for everyone. |
 | Force push | Blocked. |
@@ -76,8 +78,11 @@ ShipIt uses GitHub Flow. `main` is always releasable. Every change starts from a
 | Helm validation | Pull request and push to `main` | Run Helm lint, render dev and prod values, and verify the `helm test` hook exists. | Fails if render breaks, chart metadata is invalid, or required resources are absent. |
 | Kubernetes schema | Pull request and push to `main` | Validate rendered Kubernetes, Gateway API, and Prometheus Operator resources with kubeconform and CRD schemas. | Fails when any resource is invalid, skipped, or missing a schema. |
 | Terraform validation | Pull request and push to `main` | Run Terraform format check and validate platform configuration. | Fails on formatting drift, invalid variables, or missing provider configuration. |
+| Local acceptance | Pull request and push to `main` | On an Ubuntu runner, prepare local dependencies/images/provider/chart/schema caches and ignored test secrets. Deny external egress while allowing loopback/container/cluster traffic; run `make local-test STAGE=compose`, stop Compose, then `make local-test STAGE=kind PROFILE=lite`. Save TC-LOCAL-001 to TC-LOCAL-004 output, local image/tag/pull-policy evidence, data IDs and metrics/alert JSON. | Mandatory failure on seed/demo/health/persistence/error mismatch, attempted external download/pull, or incompatible local profile. Both environments are exercised sequentially, not a two-environment memory claim. |
 | Main image publish | Push to `main` after checks | Publish GHCR image tags for the declared SemVer app version and short SHA. | Fails if required checks are not green, image push is denied, or the SemVer tag already points to another digest. |
 | Optional release | Tag `vX.Y.Z` | Reuse gates, publish release notes, and record image tags. | Fails if tag is not SemVer or security gates fail. |
+
+Hosted runner provisioning, cache preparation, vulnerability scans, and GHCR publication need internet. The isolated runtime acceptance phase does not. CI builds/loads the local image without depending on a previously published GHCR image. WSL2/macOS/Linux trainer pre-check supplements Linux CI. There is no frontend coverage, dashboard export, or cloud deployment job.
 
 ## Docker and Compose requirements
 
@@ -89,9 +94,11 @@ ShipIt uses GitHub Flow. `main` is always releasable. Every change starts from a
 | Health check | Uses `/healthz` and expects 200. |
 | Secrets | No secrets in build arguments, layers, image history, or logs. |
 | Compose services | `app` and `postgres` are Must. Optional cache is Should. |
-| Compose health | PostgreSQL has a health check, and the app is not ready until database configuration works. |
+| Compose health | PostgreSQL health precedes one migration/seed step and app readiness; missing credentials fail clearly before start. |
 | Tags | Base and service images use pinned version tags, never floating tags. |
-| Volumes | PostgreSQL data uses a named volume for local development. |
+| Volumes | `shipit-compose-postgres` persists across stop/start; kind retains separate PVCs/local bind mounts. Confirmed reset only; backups retained. |
+| Local limits/ports | Follow proposed document 06 caps; Compose app loopback 8080, kind Gateway loopback 8081. No host PostgreSQL port; never run Compose and kind or both app environments concurrently in the canonical profile. |
+| Image delivery | Local `shortlink:local-<short-sha>` from cached inputs; `kind load docker-image shortlink:local-<short-sha> --name shipit-local` before Helm. `IfNotPresent` or `Never` permits loaded tags. Connected GHCR delivery separately pins SHA/digest. |
 
 ## Environment variables
 
@@ -99,7 +106,7 @@ ShipIt uses GitHub Flow. `main` is always releasable. Every change starts from a
 |---|---|---|---|
 | APP_ENV | dev | Selects app environment and log field. | No |
 | DATABASE_URL | postgresql URL for local ShortLink dev database | Connects to PostgreSQL. | Yes |
-| BASE_URL | http URL with port 8080, such as the prod local base URL | Builds `short_url` responses. Local smoke tests can still call `127.0.0.1:8080` with a Host header. | No |
+| BASE_URL | Compose `http://127.0.0.1:8080`; kind prod `http://shortlink.localhost:8081` | Builds `short_url`; kind smoke uses loopback 8081 and explicit Host header. | No |
 | LOG_LEVEL | INFO | Controls JSON log verbosity. | No |
 | API_KEY | local placeholder secret | Protects optional delete endpoint. | Yes |
 | PROMETHEUS_MULTIPROC_DIR | metrics state directory | Supports metrics if multiple workers are used. | No |
@@ -111,13 +118,15 @@ ShipIt uses GitHub Flow. `main` is always releasable. Every change starts from a
 
 The student repository SHOULD include an `.env.example` with names and safe placeholders only. It MUST NOT include real secrets.
 
+Local start reads ignored `.local/compose-secrets.env`, `.local/dev-secrets.env`, or `.local/prod-secrets.env` after explicit preparation. Test credentials are generated locally, not injected from GitHub for startup. Stop preserves state and only stops owned services/port-forward processes; reset needs `CONFIRM=DELETE_LOCAL_DATA`. No paid account, public hostname, API key, or cloud resource is required.
+
 ## Versioning and release
 
 | Item | Rule |
 |---|---|
 | Application version | Use SemVer, such as `v1.2.0`, from the declared app version. |
 | Image tags | Publish both immutable SemVer and short SHA, such as `v1.2.0` and `abc1234`. Reusing SemVer for a different digest is rejected. |
-| Prod deployment pin | Use the short SHA tag or image digest for prod releases. |
+| Prod deployment pin | Local lab: immutable loaded `local-<short-sha>` tag; CI registry-delivery exercise: short SHA/digest. No floating `latest` or mandatory local registry login. |
 | Helm chart version | Increment when templates or values change. |
 | Release evidence | Record image tag, chart version, target environment, smoke result, and rollback note. |
 | CHANGELOG | Student repository keeps a human-readable changelog for releases. |
@@ -148,5 +157,6 @@ A ShipIt item is Done only when all applicable points are true.
 - No secret is committed.
 - The PR is small, reviewed, and merged through branch protection.
 - The student can answer why the change exists and how it fails safely.
+- Start/stop/demo/reset meet document 06, all four local cases pass for both stages, and Prometheus/Alertmanager API evidence replaces all custom visualization work.
 
 [Back to README](../README.md)
