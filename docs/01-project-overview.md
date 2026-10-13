@@ -1,145 +1,36 @@
-# Project overview
+# 01 — Project overview
 
-Purpose: This document explains why ShipIt exists, what the student will build, and how the scope stays small enough for six weeks.
+## Problem and outcome
 
-## Problem statement
+Data engineers need to turn small file drops into checked, repeatable datasets. DataFlow is a learning project in which one fixed Python runner validates a fictional orders CSV, stores accepted and rejected rows in SQLite, and writes a JSON summary.
 
-ShortLink is a small URL-shortener service. The startup deploys it with `scp` and manual restarts. A release can break production because there is no repeatable build, no deployment gate, and no rollback practice. The team also lacks metrics, alerts, and runbooks, so slow redirects are found by users first.
+By the end of five days (30 hours), the demo processes 20 source rows: 18 accepted, 2 quarantined. A successful run records three ordered task statuses. Repeating the same file checksum and business date adds no target rows.
 
-ShipIt turns this manual process into a local cloud-native delivery platform. The student builds the ShortLink application and the platform that packages, tests, deploys, observes, and restores it. The platform runs locally with Docker, kind, Helm, Terraform, and Kubernetes.
+## Scope
 
-## Vision
+**In scope:** Python 3.12.x; standard-library CSV, SQLite, JSON, date, decimal, and checksum handling; one local CLI; one SQLite file; pytest; deterministic fixture and outputs.
 
-ShipIt MUST let a fresher show the complete DevOps lifecycle for one backend microservice. A reviewer MUST see a local Compose API, a secure image, a green CI pipeline, dev/prod Kubernetes definitions exercised sequentially, Prometheus API/CLI evidence, alerts, backup/restore, and reliability drills. No frontend is implemented.
-
-## Measurable goals
-
-| Goal | Target |
-|---|---|
-| Safe releases | A rolling update under k6 load has 0 failed requests. |
-| Fast redirects | Standard: 50 virtual users and 2 prod replicas, p95 below 300 ms. Lite: same script with 20 virtual users and 1 prod replica; save measured results. |
-| Secure image | The final image is below 200 MB and has 0 CRITICAL Trivy findings. |
-| Quality gates | Every pull request runs lint, tests, coverage, image scan, secret scan, Helm checks, Kubernetes schema checks, and Terraform validation. |
-| Local reproducibility | Target an 8 GB/four-core lite host: Compose first, then one-node kind; one active app environment. Trainer verifies proposed budgets and offline acceptance, not an assumed measured result. |
-| Alert response | Each mandatory alert has a runbook and a recorded drill or demo step. |
-
-## Scope by priority
-
-### Must: project MVP
-
-- FastAPI ShortLink API with PostgreSQL, JSON logs, health, readiness, and Prometheus metrics.
-- Multi-stage Docker image, Docker Compose development stack, and operational Bash scripts.
-- GitHub Actions CI on pull requests and image publishing from `main` to GHCR.
-- kind cluster with `shortlink-dev` and `shortlink-prod` namespaces.
-- Helm chart named `shortlink` with separate dev and prod values.
-- Gateway API routing with Envoy Gateway.
-- Terraform 1.16.x that creates kind and installs Envoy Gateway and kube-prometheus-stack.
-- Monitoring, Mailpit alert e-mail, runbooks, and reliability drills.
-- Security scans, dependency hygiene, and no secrets in Git.
-- Local-to-AWS mapping for interview readiness.
-- FR-LOCAL-01 start/stop, migrations/fictional seed, deterministic offline demo, persisted data, and clear unavailable-dependency failures in document 06.
-
-### Should: recommended hardening
-
-- Argo CD GitOps with automatic dev sync and manual prod promotion.
-- Loki and Grafana Alloy logs.
-- HPA, PodDisruptionBudget, multi-node kind, and NetworkPolicy enforcement.
-- Deeper tests, SBOM, release workflow, TFLint, yamllint, helm-unittest, and Terraform tests.
-- SOPS or Sealed Secrets, SLO queries/burn-alert evidence, postmortem, DORA metrics, and Jenkins explanation.
-
-### Could: stretch items
-
-- Ansible for a fresh Ubuntu VM.
-- Argo Rollouts canary delivery.
-- cosign signing and Kyverno policy.
-- OpenTelemetry tracing.
-- Offline local artifact checksum/rollback validation.
-- CloudNativePG evaluation.
-
-## Non-goals and out of scope
-
-- ShipIt MUST NOT include cloud/public deployment exercises or require managed Kubernetes, even in stretch work.
-- ShipIt MUST NOT require a cloud account.
-- ShipIt MUST NOT use Bitnami images or charts.
-- ShipIt MUST NOT use ingress-nginx.
-- ShipIt MUST NOT implement a service mesh or multi-cluster design.
-- ShipIt MUST NOT store real personal data or real production URLs in examples.
-- ShipIt MUST NOT include implementation code in this specification repository.
-- ShipIt MUST NOT author a frontend, custom Grafana dashboard, panel, visualization, or Geomap. Built-in consoles MAY be inspected for operations only; REST/CLI/SQL evidence is sufficient.
-
-## Assumptions
-
-| Assumption | Reason |
-|---|---|
-| Students know basic Python and SQL. | The project teaches DevOps around a small app. |
-| Students use Windows 11 with WSL2, macOS, or Linux. | These platforms can run Docker and kind locally. |
-| The trainer validates the lite profile on an 8 GB laptop before week 1. | The Must scope has to work on modest hardware. |
-| The student repository is named `shipit`. | The brief fixes this repository name. |
-| The specification repository is named `spec-shipit-devops-platform`. | The trainer publishes this spec publicly. |
-
-## Constraints
-
-| Constraint | Exact value |
-|---|---|
-| Duration | 6 weeks, about 180 hours. |
-| Must effort budget | At most about 120 hours, including about 30 hours of guided learning and setup. |
-| Remaining time | About 60 hours for Should items, interview work, and contingency. |
-| Minimum hardware | 8 GB RAM, 4 cores, 20 GB free disk with lite. |
-| Recommended hardware | 16 GB RAM, 4 or more cores, 30 GB free disk with standard. |
-| Kubernetes target | kind 0.33.x with Kubernetes 1.37.x. |
-| IaC target | Terraform 1.16.x by default. OpenTofu needs an ADR. |
-| Gateway implementation | Envoy Gateway 1.9.x. |
-| Helm target | Helm 4.x. |
-| Alert receiver | Mailpit e-mail is Must. A webhook receiver is Should. |
-
-The spec uses `.localhost` Host headers for kind routes at `127.0.0.1:8081`; Compose uses `127.0.0.1:8080`. No DNS or hosts-file edit is required for curl/API-client checks. Do not follow redirects to fictional `example.in` URLs. Initial downloads and GitHub/GHCR exercises need internet; local startup/verification after preparation do not.
-
-## Lite and standard profiles
-
-| Profile | Hardware | Enabled services | Limits |
-|---|---|---|---|
-| Lite | 8 GB RAM | Stage 1 Compose, then 1-node kind with one active app/database environment, Envoy, Prometheus/Alertmanager, Mailpit | Dev/prod each 1 app replica when active; inactive workloads 0; surge 1; retention 6 hours; no Grafana/Loki/Argo CD; app cap 256 MiB, active PostgreSQL cap 512 MiB. |
-| Standard | 16 GB RAM | Same sequential stages; optional multi-node kind/add-ons only after separate resource pre-check | Dev 1/prod 2 active replicas; surge 1; retention 24 hours; app cap 512 MiB/pod, active PostgreSQL cap 1 GiB. Optional built-in Grafana is operations-only. |
-
-`bootstrap.sh` MUST detect host RAM. If RAM is below 16 GB, it MUST recommend the lite profile before cluster creation.
+**Out of scope:** more than three pipeline tasks, a general scheduler, remote or distributed execution, network calls, listening ports, user interfaces, and external data sources.
 
 ## Success criteria
 
-- A reviewer can create a short link at `POST /api/v1/links`.
-- A reviewer can call the Compose API at `127.0.0.1:8080` or kind Gateway at `127.0.0.1:8081` with the selected Host header and receive HTTP 302 without following the external Location.
-- Dev/prod hosts are `shortlink-dev.localhost` and `shortlink.localhost`; both definitions exist, but only the selected environment's app/database runs in the local profile.
-- Each environment has its own PostgreSQL StatefulSet/PVC/Secret; inactive workloads scale to 0 and retain data.
-- The pull request checks block a broken change.
-- The `main` branch publishes a GHCR image tagged with SemVer and short SHA.
-- Prometheus API/CLI queries and saved JSON prove RED metrics, CPU, memory, restarts, and alert state.
-- Alertmanager sends at-least-once alert e-mail to Mailpit.
-- A backup can be restored into the local PostgreSQL database.
-- The final demo includes rolling update, rollback, and pod-kill evidence.
-- TC-LOCAL-001 through TC-LOCAL-004 verify both stages after initial downloads, deterministic fixture/seed operations, persisted stop/start, and input/dependency errors.
+- The exact command and output contract in [document 08](08-platform-specification.md) work from a prepared local checkout.
+- A valid-header input is classified row by row; bad rows are quarantined with a reason.
+- A file-level or task failure prevents downstream work and leaves inspectable status.
+- The same input checksum and business date produce the same logical run ID and no duplicate rows.
+- The tests cover the required cases and meet the named package coverage target.
 
-## Skills learned and job relevance
+## Skill-to-job mapping
 
-| Skill learned | Typical job-description keywords |
+| DataFlow work | Entry-level data-engineering skill |
 |---|---|
-| Linux and Bash operations | Shell scripting, process checks, permissions, cron-style automation |
-| Docker packaging | Multi-stage build, slim image, non-root container, Compose |
-| GitHub Actions CI/CD | PR checks, required status checks, GHCR, release tags |
-| Kubernetes operations | Deployments, Services, StatefulSets, probes, resources, Gateway API |
-| Helm packaging | Charts, values, release history, rollback, test hooks |
-| Terraform | State, providers, modules, variables, outputs, drift |
-| Observability | Prometheus HTTP API, PromQL, RED metrics, Alertmanager, CLI/JSON evidence, runbooks |
-| Security | Trivy, Gitleaks, Dependabot, secrets management, least privilege |
-| Reliability | Zero-downtime deploys, rollback, self-healing, backup and restore |
-| Cloud literacy (theory only) | EKS, ECR, EBS, load balancers, SNS, SES, S3 remote state; no account or deployment |
+| Read a delimited file and enforce a schema | File ingestion and data contracts |
+| Validate dates, identifiers, and money | Data quality and validation |
+| Persist rows and run state in SQLite | Relational modeling and transactions |
+| Order tasks and stop on failure | Batch orchestration fundamentals |
+| Reconcile a JSON summary to stored rows | Operational reporting and verification |
+| Test errors, retries, and replay | Reliable pipeline testing |
 
-## Related documents
-
-- [Users and roles](02-users-and-roles.md) defines actors, stories, and permissions.
-- [Functional requirements](03-functional-requirements.md) defines feature behavior and business rules.
-- [Non-functional requirements](04-non-functional-requirements.md) defines measurable quality targets.
-- [System architecture](05-system-architecture.md) will describe diagrams and ADRs.
-- [Tech stack and setup](06-tech-stack-and-setup.md) will pin versions and setup steps.
-- [Data model](07-data-model.md) defines ShortLink data and operational records.
-- [Platform specification](08-platform-specification.md) will define endpoints, resources, pipelines, and alerts.
+The specification defines acceptance criteria only; students write implementation code in their own repository.
 
 [Back to README](../README.md)
